@@ -1,0 +1,24 @@
+language: python
+
+python:
+  - "3.6"
+  - "3.7"
+  - "3.8"
+  
+# command to install dependencies
+install:
+  - pip install pytest-cov
+  - pip install codecov
+  - pip install numpy>=1.18.1
+  - # pip install rpy2
+  - pip install matplotlib
+  - pip install holoviews
+  - # pip install -r requirements.txt
+  - pip install -e "."
+  
+# command to run tests
+script:
+  - pytest --cov=./
+
+after_success:
+  - codecov
