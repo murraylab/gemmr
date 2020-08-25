@@ -1,10 +1,10 @@
 .. image:: https://travis-ci.com/murraylab/gemmr.svg?branch=master
-    :target: https://travis-ci.com/murraylab/gemmr
+   :target: https://travis-ci.com/murraylab/gemmr
 .. image:: https://codecov.io/gh/murraylab/gemmr/branch/master/graph/badge.svg
-  :target: https://codecov.io/gh/murraylab/gemmr
-.. image:: https://readthedocs.org/projects/mdhelmer-demo/badge/?version=latest
-    :target: https://mdhelmer-demo.readthedocs.io/en/latest/?badge=latest
-    :alt: Documentation Status
+   :target: https://codecov.io/gh/murraylab/gemmr
+.. image:: https://readthedocs.org/projects/gemmr/badge/?version=latest
+   :target: https://gemmr.readthedocs.io/en/latest/?badge=latest
+   :alt: Documentation Status
 .. image:: https://img.shields.io/pypi/v/gemmr
     :alt: PyPI
 .. image:: https://img.shields.io/pypi/pyversions/gemmr

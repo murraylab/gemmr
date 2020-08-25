@@ -1,6 +1,6 @@
 [![Build Status](https://travis-ci.com/murraylab/gemmr.svg?branch=master)](https://travis-ci.com/murraylab/gemmr)
 [![codecov](https://codecov.io/gh/murraylab/gemmr/branch/master/graph/badge.svg)](https://codecov.io/gh/murraylab/gemmr)
-[![Documentation Status](https://readthedocs.org/projects/mdhelmer-demo/badge/?version=latest)](https://mdhelmer-demo.readthedocs.io/en/latest/?badge=latest)
+[![Documentation Status](https://readthedocs.org/projects/gemmr/badge/?version=latest)](https://gemmr.readthedocs.io/en/latest/?badge=latest)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/gemmr)
 ![PyPI](https://img.shields.io/pypi/v/gemmr)
 
@@ -39,7 +39,7 @@ pip install gemmr
  
 Alternatively, to install and use the most current code:
 ```
-git clone https://github.com/mdhelmer/gemmr.git
+git clone https://github.com/murraylab/gemmr.git
 cd gemmr
 python setup.py install
 ```
@@ -47,7 +47,7 @@ python setup.py install
 Documentation
 -------------
  
-Extensive documentation can be found [here](https://mdhelmer-demo.readthedocs.io/en/latest/).
+Extensive documentation can be found [here](https://gemmr.readthedocs.io/en/latest/).
 
 To generate the documentation from source, install *gemmr* as described above and make sure you also have the following dependencies installed:
    * ipython
