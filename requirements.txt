@@ -8,4 +8,3 @@ scikit-learn>=0.22.1
 statsmodels>=0.10.1
 joblib>=0.15.1
 tqdm>=4.41.1
-gemmr

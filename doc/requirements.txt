@@ -3,3 +3,4 @@ matplotlib
 sphinx
 nbsphinx
 sphinx_rtd_theme
+gemmr
