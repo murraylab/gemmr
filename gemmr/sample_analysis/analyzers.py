@@ -81,7 +81,7 @@ def analyze_dataset(estr, X, Y, Xorig=None, Yorig=None,
         these functions. They are called in the given order, and must have the
         signature
 
-        .. code-block::
+        .. code-block:: python
 
             addana_fun(estr, X, Y, Xorig, Yorig, x_align_ref, y_align_ref,
                 results, **kwargs)
@@ -279,7 +279,7 @@ def analyze_resampled(estr, X, Y, Xorig=None, Yorig=None,
         these functions. They are called in the given order, and must have the
         signature
 
-        .. code-block::
+        .. code-block:: python
 
             addana_fun(estr, X, Y, Xorig, Yorig, x_align_ref, y_align_ref,
                 results, **kwargs)
@@ -476,7 +476,7 @@ def analyze_subsampled(estr, X, Y, Xorig=None, Yorig=None, x_align_ref=None,
         these functions. They are called in the given order, and must have the
         signature
 
-        .. code-block::
+        .. code-block:: python
 
             addana_fun(estr, X, Y, Xorig, Yorig, x_align_ref, y_align_ref,
                 results, **kwargs)
@@ -603,7 +603,7 @@ def analyze_model(estr, Sigma, px, ns, x_align_ref=None, y_align_ref=None,
         these functions. They are called in the given order, and must have the
         signature
 
-        .. code-block::
+        .. code-block:: python
 
             addana_fun(estr, X, Y, Xorig, Yorig, x_align_ref, y_align_ref,
                 results, **kwargs)
@@ -755,7 +755,7 @@ def analyze_model_parameters(model, estr=None, n_rep=100, n_bs=0, n_perm=0,
         these functions. They are called in the given order, and must have the
         signature
 
-        .. code-block::
+        .. code-block:: python
 
             addana_fun(estr, X, Y, Xorig, Yorig, x_align_ref, y_align_ref,
                 results, **kwargs)
@@ -772,7 +772,7 @@ def analyze_model_parameters(model, estr=None, n_rep=100, n_bs=0, n_perm=0,
     mk_test_statistics : ``None`` or function
         if not ``None`` the function must have the signature
 
-        .. code-block::
+        .. code-block:: python
 
             fun(Xtest, Ytest, x_weights_true, y_weights_true)
 
