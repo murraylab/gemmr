@@ -58,7 +58,6 @@ It is also possible to specify the target power and error levels:
     :okwarning:
 
     cca_sample_size(5, 10, target_power=0.8, target_error=.5)
-    pls_sample_size(5, 10, -0.5, -1.5, target_power=0.7, target_error=.7)
 
 Finally, the criterion on which the calculation is based, can be specified. By
 default, the `"combined"` criterion is used, meaning that power, association
