@@ -153,7 +153,7 @@ def nPerFtr2n(nPerFtr, py=None):
     assert (n.all_dims == ptot.all_dims).all()
 
     new_index = pd.MultiIndex.from_arrays(
-        [ptot, ptot.r, ptot.Sigma_id],
+        [ptot.values, ptot.r.values, ptot.Sigma_id.values],
         names=['ptot', 'r', 'Sigma_id']
     )
 
