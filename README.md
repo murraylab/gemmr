@@ -63,4 +63,4 @@ and open `doc/_build/html/index.html`  .
 
 Citation
 --------
-If you're using *gemmr* in a publication, please cite **TODO**
+If you're using *gemmr* in a publication, please cite [Helmer et al. (2020)](https://www.biorxiv.org/content/10.1101/2020.08.25.265546v1)

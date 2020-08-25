@@ -34,7 +34,7 @@ Instructions
  
 Alternatively, the most current version can be obtained from github::
 
-	$ git clone https://github.com/mdhelmer/gemmr.git
+	$ git clone https://github.com/murraylab/gemmr.git
 	$ cd gemmr
 	$ python setup.py install
 
