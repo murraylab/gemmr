@@ -5,11 +5,12 @@ def readme():
         return f.read()
 
 setup(name='gemmr',
-      version='0.1',
+      version='0.1.1',
       author='Markus Helmer',
       url='https://github.com/murraylab/gemmr',
       description='Generative Modeling of Multivariate Relationships',
       long_description=readme(),
+      long_description_content_type="text/markdown",
       classifiers=[
         'Development Status :: 4 - Beta',
         'License :: OSI Approved :: GNU General Public License v3 (GPLv3)',
