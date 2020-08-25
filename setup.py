@@ -7,7 +7,7 @@ def readme():
 setup(name='gemmr',
       version='0.1',
       author='Markus Helmer',
-      url='https://github.com/mdhelmer/gemmr',
+      url='https://github.com/murraylab/gemmr',
       description='Generative Modeling of Multivariate Relationships',
       long_description=readme(),
       classifiers=[
