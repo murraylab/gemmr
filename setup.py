@@ -5,7 +5,7 @@ def readme():
         return f.read()
 
 setup(name='gemmr',
-      version='0.1.1',
+      version='0.1.2',
       author='Markus Helmer',
       url='https://github.com/murraylab/gemmr',
       description='Generative Modeling of Multivariate Relationships',
