@@ -1,5 +1,6 @@
 ipython
 matplotlib
+holoviews
 sphinx
 nbsphinx
 sphinx_rtd_theme

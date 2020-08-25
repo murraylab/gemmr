@@ -1,7 +1,7 @@
-.. image:: https://travis-ci.com/mdhelmer/gemmr.svg
-    :target: https://travis-ci.com/mdhelmer/gemmr
-.. image:: https://codecov.io/gh/mdhelmer/gemmr/branch/master/graph/badge.svg
-  :target: https://codecov.io/gh/mdhelmer/gemmr
+.. image:: https://travis-ci.com/murraylab/gemmr.svg?branch=master
+    :target: https://travis-ci.com/murraylab/gemmr
+.. image:: https://codecov.io/gh/murraylab/gemmr/branch/master/graph/badge.svg
+  :target: https://codecov.io/gh/murraylab/gemmr
 .. image:: https://readthedocs.org/projects/mdhelmer-demo/badge/?version=latest
     :target: https://mdhelmer-demo.readthedocs.io/en/latest/?badge=latest
     :alt: Documentation Status
