@@ -1,3 +1,9 @@
+[![Build Status](https://travis-ci.com/murraylab/gemmr.svg?branch=master)](https://travis-ci.com/murraylab/gemmr)
+[![codecov](https://codecov.io/gh/murraylab/gemmr/branch/master/graph/badge.svg)](https://codecov.io/gh/murraylab/gemmr)
+[![Documentation Status](https://readthedocs.org/projects/mdhelmer-demo/badge/?version=latest)](https://mdhelmer-demo.readthedocs.io/en/latest/?badge=latest)
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/gemmr)
+![PyPI](https://img.shields.io/pypi/v/gemmr)
+
 gemmr - Generative Modeling of Multivariate Relationships
 =========================================================
 
