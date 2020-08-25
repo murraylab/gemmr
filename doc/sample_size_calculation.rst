@@ -5,6 +5,15 @@ Sample size calculation
 
 .. currentmodule: gemmr.sample_size.linear_model
 
+.. ipython:: python
+   :suppress:
+
+   from pathlib import Path
+   from gemmr.data.loaders import set_data_home
+   data_home = Path.cwd() / 'tmp'
+   data_home.mkdir(parents=True, exist_ok=True)
+   set_data_home(str(data_home))
+
 We demonstrate here the options available for the sample size calculation
 functions :func:`.cca_sample_size` and :func:`.pls_sample_size`.
 
@@ -70,7 +79,7 @@ metrics alone:
     :okwarning:
 
     cca_sample_size(5, 10, criterion='power')
-    pls_sample_size(5, 10, -0.5, -1.5, criterion='association_strength')
+    cca_sample_size(5, 10, criterion='association_strength')
     cca_sample_size(5, 10, criterion='weight')
-    pls_sample_size(5, 10, -0.5, -1.5, criterion='score')
+    cca_sample_size(5, 10, criterion='score')
     cca_sample_size(5, 10, criterion='loading')

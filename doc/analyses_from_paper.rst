@@ -25,4 +25,4 @@ and PLS:
    analyses_from_paper/required_sample_size
    analyses_from_paper/sample_size_calculator
    analyses_from_paper/pls_required_sample_size_vs_variance_spectrum
-   analyses_from_paper/sparse_cca.ipynb
+   analyses_from_paper/sparse_cca
