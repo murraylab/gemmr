@@ -12,6 +12,11 @@ Partial Least Squares (PLS). In addition, it can generate synthetic datasets for
 with CCA and PLS, and provides functionality to run and examine CCA and PLS analyses.
 It also provides a Python wrapper for *PMA*, a sparse CCA implementation.
 
+Hardware requirements
+---------------------
+
+GEMMR runs on standard hardware. To thoroughly sweep through parameters of the generative model a high-performance-computing (HPC) environment is recommended.
+
 Dependencies
 ------------
 
@@ -29,6 +34,11 @@ Some functions have additional dependencies that need to be installed separately
   * holoviews
   * rpy2
       
+The repository also contains an ``environment.yml`` file specifying a conda-environment with specific versions of all dependencies. We have tested the code with this environment. To instantiate the environment run
+```
+>>> conda env create -f environment.yml
+```
+      
 Installation
 ------------
 
@@ -44,10 +54,17 @@ cd gemmr
 python setup.py install
 ```
 
+Installation of *gemmr* itself (without potentially required dependencies) should take only a few seconds.
+
 Documentation
 -------------
  
 Extensive documentation can be found [here](https://gemmr.readthedocs.io/en/latest/).
+
+The documentation contains
+   * Demonstration of the *gemmr*'s functionality, including exptected outputs (all of which should execute quickly)
+   * Juyter notebooks detailing generation of the figures for the accompanying manuscripts
+   * API reference
 
 To generate the documentation from source, install *gemmr* as described above and make sure you also have the following dependencies installed:
    * ipython
