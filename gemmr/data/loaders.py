@@ -8,19 +8,28 @@ import pandas as pd
 import pkg_resources
 import atexit
 
-from ..generative_model import setup_model, generate_data
+from ..generative_model import GEMMR
 
 import os
 _default_data_home = os.path.expanduser('~/gemmr_data')
 
+
 _remote_urls = {
     'synthanad_cca_cca.nc': 'https://osf.io/5cvxt/download',
+    'sweep_cca_cca_random_sum+-2+0_wOtherModel.nc': 'https://osf.io/h8yqe/download',
+    'sweep_cca_cca_random_sum+-3+-2_wOtherModel.nc': 'https://osf.io/pcsvx/download',
+    'sweep_cca_cca_random_sum+-2+-2.nc': 'https://osf.io/kgqzx/download',
+    'sweep_pls_pls_random_sum+-2+0_wOtherModel.nc': 'https://osf.io/jdrn7/download',
+    'sweep_pls_pls_random_sum+-3+-2_wOtherModel.nc': 'https://osf.io/wa8f6/download',
+    'sweep_pls_pls_random_sum+-2+-2.nc': 'https://osf.io/r27kc/download',
 }
+
 
 __all__ = [
     'set_data_home',
     'load_outcomes',
     'load_metaanalysis_outcomes',
+    'load_other_outcomes',
     'generate_example_dataset',
     'load_metaanalysis',
     'print_ds_stats',
@@ -102,26 +111,28 @@ def _check_data_home(data_home, subfolder=None):
     return data_home
 
 
-def load_outcomes(model, estr=None, tag=None, data_home=None, fetch=True):
+def load_outcomes(dsid, model=None, data_home=None, fetch=True,
+                  add_prefix=False):
     """Load previously generated outcome data.
 
-    Loads the file ``{data_home}/synthanad_{model}_{estr}[_{tag}].nc``
+    Loads the file ``{data_home}/{dsid}.nc``
 
     Parameters
     ----------
+    dsid : str
+        Descriptor for dataset to load.
     model : str
         ''`cca`'' or ''`pls`''
-    estr : None or str
-        name of estimator used to analyzed the data, defaults to ``model``
-    tag : None or str
-        possibly an additional tag to identify the outcome file, defaults to
-        an empty string
     data_home : None or str
         folder in which outcome data resides, if ``None`` defaults to
         ``~/gemmr_data``
     fetch : bool
         if True and data is not found in ``data_home`` attempts to retrieve it
         from repository
+    add_prefix: bool
+        if ``True``, data variables in dataset are prefixed with `model` unless
+        they already start with `other_model` where `other_model` is set to
+        "cca" if ``model == "pls"``, or to "pls" if ``model == "cca"``.
 
     Returns
     -------
@@ -129,19 +140,44 @@ def load_outcomes(model, estr=None, tag=None, data_home=None, fetch=True):
         outcome dataset
     """
 
-    if estr is None:
-        estr = model
-
-    if tag is None:
-        tag = ''
-    else:
-        tag = '_' + tag
+    if model is None:
+        if 'cca' in dsid:
+            if 'pls' in dsid:
+                raise ValueError("Couldn't auto-detect model, "
+                                 "need to set it explicitly")
+            model = 'cca'
+        elif 'pls' in dsid:
+            if 'cca' in dsid:
+                raise ValueError("Couldn't auto-detect model, "
+                                 "need to set it explicitly")
+        else:
+            raise ValueError("Couldn't auto-detect model, "
+                             "need to set it explicitly")
 
     synthanad_home = _check_data_home(data_home)
-    fname = 'synthanad_{}_{}{}.nc'.format(model, estr, tag)
+    fname = f'{dsid}.nc'
     path = os.path.join(synthanad_home, fname)
     _check_outcome_data_exists(fname, path, fetch=fetch)
-    return xr.open_dataset(path)
+    ds = xr.open_dataset(path)
+
+    if add_prefix:
+
+        if model == 'cca':
+            other_model = 'pls'
+        elif model == 'pls':
+            other_model = 'cca'
+        else:
+            raise ValueError(f"model must be 'cca' or 'pls', not {model}")
+
+        del ds[f'{other_model}_weight_selection_algorithm']
+
+        for v in ds.data_vars:
+            if v in ['py']:
+                continue
+            elif not v.startswith(other_model):
+                ds = ds.rename(**{v: f'{model}_{v}'})
+
+    return ds
 
 
 def load_metaanalysis_outcomes(px, py, n, data_home=None, fetch=True):
@@ -168,14 +204,38 @@ def load_metaanalysis_outcomes(px, py, n, data_home=None, fetch=True):
         metaanalysis dataset
     """
     synthanad_home = _check_data_home(data_home)
-    fname = os.path.join('metaanalysis',
-                         'metaanalysis_paramset_'
-                         'px{}_py{}_n{}.nc'.format(px, py, n))
+    fname = os.path.join(synthanad_home, 'litana', f'{px}_{py}_{n}_0.nc')
     path = os.path.join(synthanad_home, fname)
     if not os.path.exists(path):
         raise FileNotFoundError("File ({}) not found. Please download it "
                                 "from https://osf.io/8expj/".format(fname))
     return xr.open_dataset(path)
+
+
+def load_other_outcomes(fname, data_home=None, fetch=True):
+    """Load previously generated data.
+
+    Parameters
+    ----------
+    fname : str
+        Name of file, must be compatible with ``xr.load_dataset``.
+    data_home : None or str
+        folder in which outcome data resides, if ``None`` defaults to
+        ``~/gemmr_data``
+    fetch : bool
+        if True and data is not found in ``data_home`` attempts to retrieve it
+        from repository
+
+    Returns
+    -------
+    data : xr.Dataset
+        loaded dataset
+    """
+    data_home = _check_data_home(data_home)
+    path = os.path.join(data_home, fname)
+    _check_outcome_data_exists(fname, path, fetch=fetch)
+    ds = xr.open_dataset(path)
+    return ds
 
 
 def _check_outcome_data_exists(fname, path, fetch=True):
@@ -204,7 +264,7 @@ def _check_outcome_data_exists(fname, path, fetch=True):
         _fetch_synthanad(fname, path)
 
     if not os.path.exists(path):
-        raise FileNotFoundError("Couldn't find data files")
+        raise FileNotFoundError(f"Couldn't find data file: {path}")
 
 
 def load_metaanalysis(data_home=None, fetch=True):
@@ -231,7 +291,7 @@ def load_metaanalysis(data_home=None, fetch=True):
     return pd.read_excel(path, header=3)
 
 
-def print_ds_stats(ds):
+def print_ds_stats(ds, prefix=''):
     """Print outcome dataset statistics.
 
     Parameters
@@ -251,7 +311,7 @@ def print_ds_stats(ds):
     print('r\t\t', ds.r.values)
     print('px\t\t', ds.px.values)
 
-    axPlusay = ds.ax + ds.ay
+    axPlusay = ds[f'{prefix}ax'] + ds[f'{prefix}ay']
     print('ax+ay range\t({:.2f}, {:.2f})'.format(
         float(axPlusay.min()), float(axPlusay.max())))
 
@@ -262,11 +322,14 @@ def print_ds_stats(ds):
         print('py\t\t!= px')
 
     print()
-    print(ds.between_assocs.sel(n_per_ftr=ds.n_per_ftr[0], rep=0, drop=True)
-          .count('Sigma_id').rename('n_Sigmas'))
+    print(
+        ds[f'{prefix}between_assocs'].sel(n_per_ftr=ds.n_per_ftr[0], rep=0,
+                                          drop=True)
+          .count('Sigma_id').rename('n_Sigmas')
+    )
     print()
 
-    if 'power' in ds:
+    if f'{prefix}power' in ds:
         print('power\t\tcalculated')
     else:
         print('power\t\tnot calculated')
@@ -304,13 +367,13 @@ def generate_example_dataset(model, px=5, py=5, ax=0, ay=0, r_between=0.3,
         dataset `Y`
     """
 
-    Sigma = setup_model(
+    gm = GEMMR(
         model, random_state=random_state,
         px=px, py=py, qx=0.9, qy=0.9,
         m=1, c1x=1, c1y=1, ax=ax, ay=ay, r_between=r_between, a_between=-1,
         max_n_sigma_trials=10000, expl_var_ratio_thr=1. / 2,
         cx=None, cy=None, verbose=False
     )
-    X, Y = generate_data(Sigma, px, n, random_state=0)
+    X, Y = gm.generate_data(n)
 
     return X, Y

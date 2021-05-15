@@ -9,10 +9,11 @@ import scipy.spatial
 from sklearn.utils import check_random_state
 
 
-from .util import check_positive_definite
+from .util import check_positive_definite, pc_spectrum_decay_constant
 from .model_selection import n_components_to_explain_variance
 
-__all__ = ['setup_model', 'generate_data']
+__all__ = ['JointCovarianceModelCCA', 'JointCovarianceModelPLS', 'GEMMR',
+           'setup_model', 'generate_data']
 
 
 class SubspaceDim1To2Warning(Warning):
@@ -22,12 +23,119 @@ class SubspaceDim1To2Warning(Warning):
 warnings.simplefilter('always', SubspaceDim1To2Warning)
 
 
-def setup_model(model, random_state=42,
-                px=5, py=5, qx=0.9, qy=0.9,
-                m=1, c1x=1, c1y=1, ax=-1, ay=-1, r_between=0.3, a_between=-1,
-                max_n_sigma_trials=10000, expl_var_ratio_thr=1./2,
-                cx=None, cy=None, verbose=False, return_full=False
-                ):
+def _triu(M, k=1):
+    """extract upper diagonal from FC matrix
+    """
+
+    if M.ndim != 2:
+        raise ValueError('2-dim array required, got {} dims'.format(M.ndim))
+
+    res = M[np.triu_indices_from(M, k=k)]
+    assert len(res) > 0
+    return res
+
+
+def is_diagonal(M):
+    if np.allclose(_triu(M), 0) and np.allclose(_triu(M.T), 0):
+        return True
+    else:
+        return False
+
+
+class JointCovarianceModelBase:
+    def __init__(self, Sigma, px, m=1,
+                 ax=None, ay=None, random_state=0):
+
+        self.px = px
+        self.py = len(Sigma) - px
+        self.m = m
+        if self.m > 1:
+            raise ValueError(f"This algorithm only works with m == 1, "
+                             f"got {self.m} modes.")
+
+        self.random_state = random_state
+
+        self.Sigma_ = Sigma
+        Sigmaxx = Sigma[:px, :px]
+        Sigmayy = Sigma[px:, px:]
+        Sigmaxy = Sigma[:px, px:]
+
+        if not (is_diagonal(Sigmaxx) and is_diagonal(Sigmayy)):
+            raise ValueError('Sigmaxx and Sigmayy must be diagonal matrices')
+
+        self._init_latent_modes(Sigmaxx, Sigmaxy, Sigmayy, m)
+
+        if ax is None:
+            self.ax = pc_spectrum_decay_constant(
+                pc_spectrum=np.linalg.eigvalsh(Sigmaxx)[::-1],
+                expl_var_ratios=(.99,)
+            )[0]
+        else:
+            self.ax = float(ax)
+
+        if ay is None:
+            self.ay = pc_spectrum_decay_constant(
+                pc_spectrum=np.linalg.eigvalsh(Sigmayy)[::-1],
+                expl_var_ratios=(.99,)
+            )[0]
+        else:
+            self.ay = float(ay)
+
+        expl_var_x, tot_var_x = _calc_explained_variance(Sigmaxx,
+                                                         self.U_latent_)
+        self.latent_expl_var_ratios_x_ = (expl_var_x / tot_var_x)[:self.m]
+
+        expl_var_y, tot_var_y = _calc_explained_variance(Sigmayy,
+                                                         self.V_latent_)
+        self.latent_expl_var_ratios_y_ = (expl_var_y / tot_var_y)[:self.m]
+
+        self.latent_mode_vector_algo_ = 'p2c_'
+
+    @classmethod
+    def from_jcov_model(cls, jcov, m=1, random_state=None):
+        return cls(
+            jcov.Sigma_, jcov.px, m=m,
+            ax=jcov.ax, ay=jcov.ay,
+            random_state=random_state
+        )
+
+    def generate_data(self, n, random_state=None):
+        if random_state is None:
+            random_state = self.random_state
+        return generate_data(self.Sigma_, self.px, n, random_state)
+
+
+class JointCovarianceModelCCA(JointCovarianceModelBase):
+    def _init_latent_modes(self, Sigmaxx, Sigmaxy, Sigmayy, m):
+        Sigmaxx_invsqrt = np.diag(1. / np.sqrt(np.diag(Sigmaxx)))
+        Sigmayy_invsqrt = np.diag(1. / np.sqrt(np.diag(Sigmayy)))
+        K = Sigmaxx_invsqrt.dot(Sigmaxy).dot(Sigmayy_invsqrt)
+        U, s, Vh = np.linalg.svd(K)
+
+        self.true_assocs_ = self.true_corrs_ = s[:m]
+
+        self.U_latent_ = np.dot(Sigmaxx_invsqrt, U[:, :m])
+        self.U_latent_ /= np.linalg.norm(self.U_latent_, axis=0, keepdims=True)
+
+        self.V_latent_ = np.dot(Sigmayy_invsqrt, (Vh.T)[:, :m])
+        self.V_latent_ /= np.linalg.norm(self.V_latent_, axis=0, keepdims=True)
+
+
+class JointCovarianceModelPLS(JointCovarianceModelBase):
+    def _init_latent_modes(self, Sigmaxx, Sigmaxy, Sigmayy, m):
+        U, s, Vh = np.linalg.svd(Sigmaxy)
+        V = Vh.T
+        self.U_latent_ = U[:, :m]
+        self.true_assocs_ = self.true_covs_ = s[:m]
+        self.V_latent_ = V[:, :m]
+
+        # true corrs are unknown, set attribute anyway for compatibility
+        x_vars = np.diag((self.U_latent_.T).dot(Sigmaxx).dot(self.U_latent_))
+        y_vars = np.diag((self.V_latent_.T).dot(Sigmayy).dot(self.V_latent_))
+        self.true_corrs_ = self.true_covs_ / np.sqrt(x_vars * y_vars)
+
+
+class GEMMR:
     r"""Generate a joint covariance matrix for `X` and `Y`.
 
     It is assumed that both datasets live in their respective principal
@@ -92,15 +200,192 @@ def setup_model(model, random_state=42,
     return_full : bool
         if ``False`` returns only the joint covariance matrix, otherwise return
         more quantities of interest
+    rotate_XY : bool
+        EXPERIMENTAL, DO NOT USE
+
+    Attributes
+    ----------
+    Sigma_ : np.ndarray
+        joint covariance matrix for `X` and `Y`
+    true_assocs_ : np.ndarray (m,)
+        true association strengths, for PLS these are the singular values of
+        ``Sigmaxy``, for CCA these are the singular values of
+        :math:`\Sigma_{YY}^{-1/2} \Sigma_{XY} \Sigma_{YY}^{-1/2}`
+    true_covs_ : np.ndarray (m,)
+        (if ``model == 'pls'``) the encoded cross-modality correlations for
+        each mode
+    true_corrs_ : np.ndarray (m,)
+        (if ``model == 'cca'``) the encoded cross-modality correlations for
+        each mode
+    U_ : np.ndarray (n_X_features, n_X_features)
+        basis vectors for `X`
+    V_ : np.ndarray (n_Y_features, n_Y_features)
+        basis vectors for `Y`
+    latent_expl_var_ratios_x_ : np.ndarray (m,)
+        explained variance ratio in `X` modality along the latent directions
+    latent_expl_var_ratios_y_ : np.ndarray (m,)
+        explained variance ratio in `Y` modality along the latent directions
+    U_latent_ : np.ndarray (n_X_features, m)
+        latent mode vectors for `X`
+    V_latent_ : np.ndarray (n_Y_features, m)
+        latent mode vectors for `Y`
+    cosine_sim_pc1_latentMode_x_ : (m,)
+        cosine similarities between latent mode vectors and PC1 for `X`
+    cosine_sim_pc1_latentMode_y_ : (m,)
+        cosine similarities between latent mode vectors and PC1 for `Y`
+    latent_mode_vector_algo_ : str
+        'qr__' or 'opti', algorithm with which the latent mode vectors were
+        found
+    qx_ : int
+        dimensionality of dominant `X` subspace
+    qy_ : int
+        dimensionality of dominant `Y` subspace
+
+    Raises
+    ------
+    ValueError
+        * if the number of requested between-set association modes `m` is
+        greater than the minimum of the dimensions of the dominant subspaces
+        (as encoded by `qx` and `qy`)
+        * if the resulting joint covariance matrix is not positive definite
+    NotImplementedError
+        * if `model` == 'cca' and `m` > 1
+    """
+
+    def __init__(self, model, random_state=42,
+                 px=5, py=5, qx=0.9, qy=0.9,
+                 m=1, c1x=1, c1y=1, ax=-1, ay=-1, r_between=0.3, a_between=-1,
+                 max_n_sigma_trials=10000, expl_var_ratio_thr=1./2,
+                 cx=None, cy=None, verbose=False, rotate_XY=False):
+        self.model = model
+        self.random_state = random_state
+        self.px = px
+        self.py = py
+        self.qx = qx
+        self.qy = qy
+        self.m = m
+        self.c1x = c1x
+        self.c1y = c1y
+        self.ax = ax
+        self.ay = ay
+        self.r_between = r_between
+        self.a_between = a_between
+        self.max_n_sigma_trials = max_n_sigma_trials
+        self.expl_var_ratio_thr = expl_var_ratio_thr
+        self.cx = cx
+        self.cy = cy
+        self.verbose = verbose
+        self.rotate_XY = rotate_XY
+
+        self._setup_model()
+
+    def _setup_model(self):
+        self.Sigma_, self.true_assocs_, self.true_corrs_, \
+        self.U_, self.V_, \
+        self.latent_expl_var_ratios_x_, self.latent_expl_var_ratios_y_, \
+        self.U_latent_, self.V_latent_, \
+        self.cosine_sim_pc1_latentMode_x_, self.cosine_sim_pc1_latentMode_y_, \
+        self.latent_mode_vector_algo_, self.qx_, self.qy_ = setup_model(
+            model=self.model, random_state=self.random_state,
+            px=self.px, py=self.py,
+            qx=self.qx, qy=self.qy, m=self.m, c1x=self.c1x, c1y=self.c1y,
+            ax=self.ax, ay=self.ay, r_between=self.r_between,
+            a_between=self.a_between,
+            max_n_sigma_trials=self.max_n_sigma_trials,
+            expl_var_ratio_thr=self.expl_var_ratio_thr, cx=self.cx, cy=self.cy,
+            verbose=self.verbose, return_full=True, rotate_XY=self.rotate_XY
+        )
+
+    def generate_data(self, n, random_state=None):
+        if random_state is None:
+            random_state = self.random_state
+        return generate_data(self.Sigma_, self.px, n, random_state)
+
+
+def setup_model(model, random_state=42,
+                px=5, py=5, qx=0.9, qy=0.9,
+                m=1, c1x=1, c1y=1, ax=-1, ay=-1, r_between=0.3, a_between=-1,
+                max_n_sigma_trials=10000, expl_var_ratio_thr=1./2,
+                cx=None, cy=None, verbose=False, return_full=False,
+                rotate_XY=False
+                ):
+    r"""Generate a joint covariance matrix for `X` and `Y`.
+
+    It is assumed that both datasets live in their respective principal
+    component coordinate system, i.e. that the within-set covariance matrices
+    :math:`\Sigma_{XX}` and :math:`\Sigma_{YY}` are diagonal. The entries of
+    the diagonal are set to follow power laws with decay constants `ax` and
+    `ay` for `X` and `Y`, respectively, and scaled by `cx` and `cy`.
+
+    For generation of the between-set covariance matrix :math:`\Sigma_{XY}`
+    :func:`_mk_Sigmaxy` is called, see there for details.
+
+    Parameters
+    ----------
+    model: "pls" or "cca"
+        whether to return a covariance matrix for CCA or PLS
+    random_state : None or int or a random number generator instance
+        For reproducibility, a random number generator is instantiated and all
+        random numbers are drawn from that
+    px : int
+        number of features in `X`
+    py : int
+        number of features in `Y`
+    qx : int or float between 0 and 1
+        if float, gives the fraction of `px` to use
+        (i.e. `q_x <- int(q_x * p_x)`). Specifies the number of dominant basis
+        vectors from which to choose one component of the latent mode vectors
+        for `X`. See :func:`_mk_Sigmaxy` for details
+    qy : int or float between 0 and 1
+        if float, gives the fraction of `py` to use
+        (i.e. `q_y <- int(q_y * p_y)`). Specifies the number of dominant basis
+        vectors from which to choose one component of the latent mode vectors
+        for `Y`. See :func:`_mk_Sigmaxy` for details
+    m : int
+        number of latent cross-modality modes to encode
+    c1x : float
+        Should usually be 1. All `X` variances will be scaled by this number
+    c1y : float
+        Should usually be 1. All `Y` variances will be scaled by this number
+    ax : float
+        should usually be <= 0. Eigenvalues of within-modality covariance for
+        `X` are assumed to follow a power-law with this exponent
+    ay : float
+        should usually be <= 0. Eigenvalues of within-modality covariance for
+        `X` are assumed to follow a power-law with this exponent
+    r_between : float between 0 and 1
+        cross-modality correlation the latent mode vectors should have
+    a_between : float
+        should usually be <= 0. Higher-order cross-modality correlations are
+        scaled by a power-law with this exponent
+    max_n_sigma_trials : int >= 1
+        number of times an attempt is made to find suitable latent mode
+        vectors. See :func:`_mk_Sigmaxy` for details.
+    expl_var_ratio_thr : float
+        threshold for required within-modality variance along latent mode
+        vectors
+    cx : np.ndarray
+        within-set variances for `X`, if ``None`` will be computed from
+        ``c1x``, ``px`` and ``ax``
+    cy : np.ndarray
+        within-set variances for `Y`, if ``None`` will be computed from
+        ``c1y``, ``py`` and ``ay``
+    verbose : bool
+        whether to print status messages
+    return_full : bool
+        if ``False`` returns only the joint covariance matrix, otherwise return
+        more quantities of interest
+    rotate_XY : bool
+        EXPERIMENTAL, DO NOT USE
 
     Returns
     -------
     Sigma : np.ndarray
         joint covariance matrix for `X` and `Y`
-    Sigmaxy_svals : np.ndarray (m,)
-        singular values of ``Sigmaxy``, these are the true canonical
-        correlations or covariances (if ``model`` is 'cca' or 'pls',
-        respectively)
+    true_assocs : np.ndarray (m,)
+        true association strengths, for PLS these are the singular values of
+        ``Sigmaxy``, for CCA these are the singular values of
+        :math:`\Sigma_{YY}^{-1/2} \Sigma_{XY} \Sigma_{YY}^{-1/2}`
     true_corrs : np.ndarray (m,)
         the encoded cross-modality correlations for each mode
     U : np.ndarray (n_X_features, n_X_features)
@@ -122,6 +407,10 @@ def setup_model(model, random_state=42,
     latent_mode_vector_algo : str
         'qr__' or 'opti', algorithm with which the latent mode vectors were
         found
+    qx : int
+        dimensionality of dominant `X` subspace
+    qy : int
+        dimensionality of dominant `Y` subspace
 
     Raises
     ------
@@ -163,31 +452,8 @@ def setup_model(model, random_state=42,
         raise ValueError('Invalid r_latent: {}, must be '
                          '>= 0 and <= 1'.format(r_between))
 
-    # basis vectors for X and Y
-    # w.l.o.g. can be assumed to be standard basis
-    U = np.eye(px)
-    V = np.eye(py)
-
-    if cx is None:
-        cx = c1x * np.arange(1, px + 1) ** float(ax)
-    else:
-        if len(cx) != px:
-            raise ValueError('len(cx) != px')
-        if verbose:
-            print('using given cx, ignoring ax (except for estimating noise '
-                  'for definiteness check)')
-
-    if cy is None:
-        cy = c1y * np.arange(1, py + 1) ** float(ay)
-    else:
-        if len(cy) != py:
-            raise ValueError('len(cy) != py')
-        if verbose:
-            print('using given cy, ignoring ay (except for estimating noise '
-                  'for definiteness check)')
-
-    Sigmaxx = U.dot(np.diag(cx)).dot(U.T)
-    Sigmayy = V.dot(np.diag(cy)).dot(V.T)
+    U, Sigmaxx = _mk_within_cov(px, ax, c1x, cx, verbose, 'x')
+    V, Sigmayy = _mk_within_cov(py, ay, c1y, cy, verbose, 'y')
 
     qx = _check_subspace_dimension(Sigmaxx, qx)
     qy = _check_subspace_dimension(Sigmayy, qy)
@@ -200,7 +466,7 @@ def setup_model(model, random_state=42,
                 m, min(qx, qy)))
 
     true_corrs = r_between * np.arange(1, m + 1) ** float(a_between)
-    Sigmaxy, Sigmaxy_svals, true_corrs, \
+    Sigmaxy, true_assocs, true_corrs, \
         latent_expl_var_ratios_x, latent_expl_var_ratios_y, \
         U_latent, V_latent, \
         cosine_sim_pc1_latentMode_x, cosine_sim_pc1_latentMode_y, \
@@ -216,19 +482,75 @@ def setup_model(model, random_state=42,
     ])
 
     # check that covariance matrix Sigma is positive definite
-    noisex = c1x * (px + 1) ** (ax)
-    noisey = c1y * (py + 1) ** (ay)
+    noisex = c1x * float(px + 1) ** (ax)
+    noisey = c1y * float(py + 1) ** (ay)
     # raises ValueError if Sigma is not positive definite
     check_positive_definite(Sigma, min(noisex, noisey))
 
+    if rotate_XY:
+        warnings.warn('rotate_XY functionality not tested')
+        Qx = np.linalg.qr(rng.normal(size=(px, px)))[0]
+        Qy = np.linalg.qr(rng.normal(size=(py, py)))[0]
+        assert np.allclose(np.dot(Qx.T, Qx), np.eye(len(Qx)))
+        assert np.allclose(np.dot(Qy.T, Qy), np.eye(len(Qy)))
+        Qxy = np.vstack([
+            np.hstack([Qx, np.zeros((Qx.shape[0], Qy.shape[0]))]),
+            np.hstack([np.zeros((Qy.shape[0], Qx.shape[0])), Qy])
+        ])
+        Sigma = (Qxy.T).dot(Sigma).dot(Qxy)
+        U_latent = np.dot(Qx.T, U_latent)  # Qx.T = Qx^{-1}
+        V_latent = np.dot(Qy.T, V_latent)  # Qy.T = Qy^{-1}
+
     if return_full:
-        return Sigma, Sigmaxy_svals, true_corrs, U, V, \
+        return Sigma, true_assocs, true_corrs, U, V, \
                latent_expl_var_ratios_x, latent_expl_var_ratios_y, \
                U_latent, V_latent, \
                cosine_sim_pc1_latentMode_x, cosine_sim_pc1_latentMode_y, \
-               latent_mode_vector_algo
+               latent_mode_vector_algo, qx, qy
     else:
         return Sigma
+
+
+def _mk_within_cov(px, ax, c1x=1, cx=None, verbose=False, dimlbl=''):
+    """Setup basis vectors and within-set covariance matrix for a dimension.
+
+    Parameters
+    ----------
+    px : int
+        number of features in dimension
+    ax : float
+        should usually be <= 0. Eigenvalues of within-modality covariance are
+        assumed to follow a power-law with this exponent
+    c1x : float
+        Should usually be 1. All variances will be scaled by this number
+    cx : np.ndarray
+        within-set variances, if ``None`` will be computed from
+        ``c1x``, ``px`` and ``ax``
+    verbose : bool
+        whether to print status messages
+    dimlbl : str
+        in case something goes wrong the error message will identify the
+        used dimension by this string
+
+    Returns
+    -------
+
+    """
+    # basis vectors for X and Y
+    # w.l.o.g. can be assumed to be standard basis
+    U = np.eye(px)
+
+    if cx is None:
+        cx = c1x * np.arange(1, px + 1) ** float(ax)
+    else:
+        if len(cx) != px:
+            raise ValueError(f'len(c{dimlbl}) != p{dimlbl}')
+        if verbose:
+            print(f'using given c{dimlbl}, ignoring a{dimlbl} '
+                  f'(except for estimating noise for definiteness check)')
+
+    Sigmaxx = U.dot(np.diag(cx)).dot(U.T)
+    return U, Sigmaxx
 
 
 def _check_subspace_dimension(Sigmaxx, qx):
@@ -367,7 +689,7 @@ def _mk_Sigmaxy(assemble_Sigmaxy, Sigmaxx, Sigmayy, U, V, m,
     -------
     Sigmaxy : np.ndarray (n_X_features, n_Y_features)
         cross-modality covariance matrix
-    Sigmaxy_svals: np.ndarray (m,)
+    true_assocs: np.ndarray (m,)
         singular values of ``Sigmaxy``, these are the true canonical
         correlations or covariances (for CCA or PLS, respectively)
     true_corrs : np.ndarray (m,)
@@ -405,7 +727,7 @@ def _mk_Sigmaxy(assemble_Sigmaxy, Sigmaxx, Sigmayy, U, V, m,
         _find_latent_mode_vectors_pc1,
     ]:
 
-        Sigmaxy, Sigmaxy_svals, U_, V_, \
+        Sigmaxy, true_assocs, U_, V_, \
             latent_expl_var_ratios_x, latent_expl_var_ratios_y, \
             min_eval, true_corrs, latent_mode_vector_algo = \
             _find_latent_mode_vectors_alg(
@@ -429,7 +751,7 @@ def _mk_Sigmaxy(assemble_Sigmaxy, Sigmaxx, Sigmayy, U, V, m,
         [1 - scipy.spatial.distance.cosine(V[:, 0], V_[:, modei])
          for modei in range(m)])
 
-    return Sigmaxy, Sigmaxy_svals, true_corrs, \
+    return Sigmaxy, true_assocs, true_corrs, \
         latent_expl_var_ratios_x, latent_expl_var_ratios_y, \
         U_, V_, cosine_sim_pc1_latentMode_x, cosine_sim_pc1_latentMode_y, \
         latent_mode_vector_algo
@@ -505,7 +827,7 @@ def _find_latent_mode_vectors_pc1(Sigmaxx, Sigmayy, U, V, assemble_Sigmaxy,
     -------
     Sigmaxy : np.ndarray (px, py)
         between-set covariance matrix
-    Sigmaxy_svals : np.ndarray (m,)
+    true_assocs : np.ndarray (m,)
         singular values of ``Sigmaxy``, these are the true canonical
         correlations or covariances (for CCA or PLS, respectively)
     U_ : np.ndarray (px, m)
@@ -530,7 +852,7 @@ def _find_latent_mode_vectors_pc1(Sigmaxx, Sigmayy, U, V, assemble_Sigmaxy,
     qx, qy = 1, 1
     if m > 1:
         raise ValueError('_find_latent_mode_vectors_pc1 requires m == 1')
-    min_eval, Sigmaxy, Sigmaxy_svals, U_, V_, latent_expl_var_ratios_x, \
+    min_eval, Sigmaxy, true_assocs, U_, V_, latent_expl_var_ratios_x, \
         latent_expl_var_ratios_y, true_corrs = _find_latent_mode_vectors(
             assemble_Sigmaxy, Sigmaxx, Sigmayy, U, V,
             _generate_random_dominant_subspace_rotations, expl_var_ratio_thr,
@@ -538,7 +860,7 @@ def _find_latent_mode_vectors_pc1(Sigmaxx, Sigmayy, U, V, assemble_Sigmaxy,
             verbose=verbose)
 
     latent_mode_vector_algo = 'pc1_'
-    return Sigmaxy, Sigmaxy_svals, U_, V_, \
+    return Sigmaxy, true_assocs, U_, V_, \
         latent_expl_var_ratios_x, latent_expl_var_ratios_y, \
         min_eval, true_corrs, latent_mode_vector_algo
 
@@ -591,7 +913,7 @@ def _find_latent_mode_vectors_opti(Sigmaxx, Sigmayy, U, V, assemble_Sigmaxy,
     -------
     Sigmaxy : np.ndarray (px, py)
         between-set covariance matrix
-    Sigmaxy_svals : np.ndarray (m,)
+    true_assocs : np.ndarray (m,)
         singular values of ``Sigmaxy``, these are the true canonical
         correlations or covariances (for CCA or PLS, respectively)
     U_ : np.ndarray (px, m)
@@ -640,7 +962,7 @@ def _find_latent_mode_vectors_opti(Sigmaxx, Sigmayy, U, V, assemble_Sigmaxy,
         maxiter=max_n_sigma_trials,
     )
     if len(uvrots) > 0:
-        min_eval, Sigmaxy, Sigmaxy_svals, U_, V_, \
+        min_eval, Sigmaxy, true_assocs, U_, V_, \
             latent_expl_var_ratios_x, latent_expl_var_ratios_y, true_corrs = \
             _find_latent_mode_vectors(
                 assemble_Sigmaxy, Sigmaxx, Sigmayy, U, V,
@@ -650,11 +972,11 @@ def _find_latent_mode_vectors_opti(Sigmaxx, Sigmayy, U, V, assemble_Sigmaxy,
         latent_mode_vector_algo = 'opti'
     else:
         min_eval = -1  # value < 0 indicates that no solutino has been found
-        Sigmaxy, Sigmaxy_svals, U_, V_, \
+        Sigmaxy, true_assocs, U_, V_, \
             latent_expl_var_ratios_x, latent_expl_var_ratios_y, true_corrs = \
             None, None, None, None, None, None, true_corrs
         latent_mode_vector_algo = 'opti_failed'
-    return Sigmaxy, Sigmaxy_svals, U_, V_, \
+    return Sigmaxy, true_assocs, U_, V_, \
         latent_expl_var_ratios_x, latent_expl_var_ratios_y, \
         min_eval, true_corrs, latent_mode_vector_algo
 
@@ -707,7 +1029,7 @@ def _find_latent_mode_vectors_qr(Sigmaxx, Sigmayy, U, V, assemble_Sigmaxy,
     -------
     Sigmaxy : np.ndarray (px, py)
         between-set covariance matrix
-    Sigmaxy_svals : np.ndarray (m,)
+    true_assocs : np.ndarray (m,)
         singular values of ``Sigmaxy``, these are the true canonical
         correlations or covariances (for CCA or PLS, respectively)
     U_ : np.ndarray (px, m)
@@ -728,7 +1050,7 @@ def _find_latent_mode_vectors_qr(Sigmaxx, Sigmayy, U, V, assemble_Sigmaxy,
         identifies the algorithm: is set to ``'qr__'``
     """
     uvrots = None
-    min_eval, Sigmaxy, Sigmaxy_svals, U_, V_, \
+    min_eval, Sigmaxy, true_assocs, U_, V_, \
         latent_expl_var_ratios_x, latent_expl_var_ratios_y, true_corrs = \
         _find_latent_mode_vectors(
             assemble_Sigmaxy, Sigmaxx, Sigmayy, U, V,
@@ -736,7 +1058,7 @@ def _find_latent_mode_vectors_qr(Sigmaxx, Sigmayy, U, V, assemble_Sigmaxy,
             m, max_n_sigma_trials, qx, qy, rng, true_corrs, uvrots,
             verbose=verbose)
     algo = 'qr__'
-    return Sigmaxy, Sigmaxy_svals, U_, V_, \
+    return Sigmaxy, true_assocs, U_, V_, \
         latent_expl_var_ratios_x, latent_expl_var_ratios_y, min_eval, \
         true_corrs, algo
 
@@ -814,9 +1136,8 @@ def _find_latent_mode_vectors(assemble_Sigmaxy, Sigmaxx, Sigmayy, U, V,
         `min_eval` > 0
     Sigmaxy : np.ndarray (px, py)
         between-set covariance matrix
-    Sigmaxy_svals : np.ndarray (m,)
-        singular values of ``Sigmaxy``, these are the true canonical
-        correlations or covariances (for CCA or PLS, respectively)
+    true_assocs : np.ndarray (m,)
+        true association strengths
     U_ : np.ndarray (px, m)
         between-set weight vectors
     V_ : np.ndarray (py, m)
@@ -849,14 +1170,14 @@ def _find_latent_mode_vectors(assemble_Sigmaxy, Sigmaxx, Sigmayy, U, V,
         if not _enough_variance_explained:
             continue
 
-        Sigmaxy, Sigmaxy_svals, U_, V_, min_eval, true_corrs = \
+        Sigmaxy, true_assocs, U_, V_, min_eval, true_corrs = \
             assemble_Sigmaxy(Sigmaxx, Sigmayy, U_, V_, m, true_corrs)
 
         if min_eval > 0:
             if verbose:
                 print('success finding latent-mode vectors after '
                       '{} trials'.format(_trial))
-            return min_eval, Sigmaxy, Sigmaxy_svals, U_, V_, \
+            return min_eval, Sigmaxy, true_assocs, U_, V_, \
                 latent_expl_var_ratios_x, latent_expl_var_ratios_y, \
                 true_corrs
 
@@ -1081,17 +1402,11 @@ def _variance_explained_by_latent_modes(Sigmaxx, Sigmayy, U_, V_,
     m = U_.shape[1]
 
     # check if resulting latent mode vectors U_, V_ explain enough variance
-    expl_var_x = np.array(
-        [np.dot(U_[:, modei], np.dot(Sigmaxx, U_[:, modei]))
-         for modei in range(m)])
-    tot_var_x = np.diag(Sigmaxx).sum()
+    expl_var_x, tot_var_x = _calc_explained_variance(Sigmaxx, U_)
     mean_tot_var_x = tot_var_x / px
     latent_expl_var_ratios_x = expl_var_x / tot_var_x  # will be returned
 
-    expl_var_y = np.array(
-        [np.dot(V_[:, modei], np.dot(Sigmayy, V_[:, modei]))
-         for modei in range(m)])
-    tot_var_y = np.diag(Sigmayy).sum()
+    expl_var_y, tot_var_y = _calc_explained_variance(Sigmayy, V_)
     mean_tot_var_y = tot_var_y / py
     latent_expl_var_ratios_y = expl_var_y / tot_var_y  # will be returned
 
@@ -1104,6 +1419,16 @@ def _variance_explained_by_latent_modes(Sigmaxx, Sigmayy, U_, V_,
 
     return enough_variance_explained, \
         latent_expl_var_ratios_x, latent_expl_var_ratios_y
+
+
+def _calc_explained_variance(within_set_cov, latent_axes):
+    expl_var_x = np.array([
+        np.dot(latent_axes[:, modei],
+               np.dot(within_set_cov, latent_axes[:, modei]))
+        for modei in range(latent_axes.shape[1])
+    ])
+    tot_var_x = np.diag(within_set_cov).sum()
+    return expl_var_x, tot_var_x
 
 
 def _Sigmaxy_negative_min_eval(uvrot, assemble_Sigmaxy, Sigmaxx, Sigmayy,
@@ -1250,9 +1575,9 @@ def _assemble_Sigmaxy_pls(Sigmaxx, Sigmayy, U_, V_, m, true_corrs):
     -------
     Sigmaxy : np.ndarray (px, py)
         between-set covariance matrix
-    Sigmaxy_svals : np.ndarray (m,)
-        singular values of ``Sigmaxy``, these are the true canonical
-        covariances
+    true_assocs : np.ndarray (m,)
+        true encoded association strengths, these are the singular values of
+        ``Sigmaxy``, these are the true canonical covariances
     U_ : np.ndarray (px, m)
         weight vectors for between-set association modes in `X`
     V_ : np.ndarray (py, m)
@@ -1374,9 +1699,11 @@ def _assemble_Sigmaxy_cca(Sigmaxx, Sigmayy, U_, V_, m, true_corrs):
     -------
     Sigmaxy : np.ndarray (px, py)
         between-set covariance matrix
-    Sigmaxy_svals : np.ndarray (m,)
-        singular values of ``Sigmaxy``, these are the true canonical
-        correlations and identical to ``true_corrs``
+    true_assocs_ : np.ndarray (m,)
+        true encoded association strengths, these are the true canonical
+         correlations and identical to ``true_corrs``. If ``Sigmaxx`` and
+         ``Sigmayy`` are identity matrices, then these are also the singular
+         values of ``Sigmaxy``
     U_ : np.ndarray (px, m)
         weight vectors for between-set association modes in `X`
     V_ : np.ndarray (py, m)
@@ -1397,7 +1724,7 @@ def _assemble_Sigmaxy_cca(Sigmaxx, Sigmayy, U_, V_, m, true_corrs):
 
     else:  # data are not white
 
-        if m == 1:  # white data, 1 between-set mode
+        if m == 1:  # 1 between-set mode
 
             sqrt_Sigmaxx = np.diag(np.sqrt(np.diag(Sigmaxx)))
             sqrt_Sigmayy = np.diag(np.sqrt(np.diag(Sigmayy)))
@@ -1486,6 +1813,8 @@ def calc_schur_complement(A, B_or_px, C=None, D=None, kind='auto'):
     return schur_complement
 
 
+# NOTE: This function is used within class GEMMR, but is also useful
+# separately, when only a Sigma matrix is given
 def generate_data(Sigma, px, n, random_state=42):
     r"""Generate synthetic data for a given model.
 

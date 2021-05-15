@@ -23,7 +23,7 @@ A typical use case of :func:`analyze_model_parameters` is the following:
         n_test=1000,
         pxs=(2,),
         rs=(0.9,),
-        axPlusay_range=(0, 0),
+        powerlaw_decay=('random_sum', 0, 0),
         n_per_ftrs='auto',
         addons=[
             addon.weights_true_cossim,
@@ -56,7 +56,7 @@ Here's what all the parameters are for:
 * ``n_test`` is the sample size used for a separate test dataset drawn from the same normal distribution as the synthetic dataset analyzed. Each draw from the normal distributions results in data for different "subjects", i.e. the rows of the generated data matrices have independent identities across repetitions. Some add-on functions that intend to compare generated data across repetitions therefore use a common.
 * ``pxs`` is an iterable specifying the number of features for dataset :math:`X`. The number of features for dataset :math:`Y` is assumed to be identical by default, but see argument ``py`` of :func:`ccapwr.sample_analysis.analyzers.analyze_model_parameters`
 * ``rs`` is an iterable specifying the assumed true correlations between datasets
-* ``axPlusay_range`` is a tuple specifying the minimum and maximum value for :math:`a_x+a_y`. :math:`a_x` and :math:`a_y` are, respectively, the decay constants for the powerlaws describing the within-set variance spectrum for datasets :math:`X` and :math:`Y`. Each time a covariance matrix is set up values for :math:`a_x+a_y` are drawn uniformly within this range. For CCA use ``axPlusay_range=(0,0)``
+* ``powerlaw_decay`` is a tuple specifying the minimum and maximum value for :math:`a_x+a_y`. :math:`a_x` and :math:`a_y` are, respectively, the decay constants for the powerlaws describing the within-set variance spectrum for datasets :math:`X` and :math:`Y`. Each time a covariance matrix is set up values for :math:`a_x+a_y` are drawn uniformly within this range.
 * ``n_per_ftrs`` is an iterable giving the number of samples per total number of features (i.e. the number of features in :math:`X` plus the number of features in :math:`Y`) to use. It can also be set to ``'auto'`` in which case a crude experience-based heuristic is used to choose the set of numbers
 * ``addons`` is a list of add-on functions that allow to run arbitrary analyses on each synthetic dataset after it has been fitted. A number of such functions is provided in module :mod:`addon`,
 * ``mk_test_statistics`` is call-able object providing statistics of the test dataset that are made available to all add-on functions

@@ -23,12 +23,12 @@ We first import these functions
 
     from gemmr import cca_sample_size, pls_sample_size
 
-The basic use case only requires the number of features and (for PLS) the
+The basic use case only requires the number of features and the
 principal component spectrum decay constants:
 
 .. ipython:: python
 
-    cca_sample_size(5, 10)
+    cca_sample_size(5, 10, -0.8, -1.2)
     pls_sample_size(5, 10, -0.5, -1.5)
 
 Instead of the number of features, the functions also accept data matrices.
@@ -37,7 +37,7 @@ To demonstrate this, we first generate a dataset
 .. ipython:: python
 
     from gemmr.data import generate_example_dataset
-    Xcca, Ycca = generate_example_dataset('cca', px=5, py=10)
+    Xcca, Ycca = generate_example_dataset('cca', px=5, py=10, ax=-0.8, ay=-1.2)
     Xpls, Ypls = generate_example_dataset('pls', px=5, py=10, ax=-.5, ay=-1.5, n=10000)
 
 Then we can calculate sample sizes for these datasets as follows:
@@ -66,7 +66,7 @@ It is also possible to specify the target power and error levels:
 .. ipython:: python
     :okwarning:
 
-    cca_sample_size(5, 10, target_power=0.8, target_error=.5)
+    cca_sample_size(5, 10, -0.8, -1.2, target_power=0.8, target_error=.5)
 
 Finally, the criterion on which the calculation is based, can be specified. By
 default, the `"combined"` criterion is used, meaning that power, association
@@ -78,8 +78,8 @@ metrics alone:
 .. ipython:: python
     :okwarning:
 
-    cca_sample_size(5, 10, criterion='power')
-    cca_sample_size(5, 10, criterion='association_strength')
-    cca_sample_size(5, 10, criterion='weight')
-    cca_sample_size(5, 10, criterion='score')
-    cca_sample_size(5, 10, criterion='loading')
+    cca_sample_size(5, 10, -0.8, -1.2, criterion='power')
+    cca_sample_size(5, 10, -0.8, -1.2, criterion='association_strength')
+    cca_sample_size(5, 10, -0.8, -1.2, criterion='weight')
+    cca_sample_size(5, 10, -0.8, -1.2, criterion='score')
+    cca_sample_size(5, 10, -0.8, -1.2, criterion='loading')

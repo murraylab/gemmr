@@ -46,7 +46,7 @@ varying size :math:`n` are generated and the smallest :math:`n` is determined
 for which statistical power and error metrics reach a target level of 90% and
 10%, respectively.
 
-.. image:: fig/fig2alternative_samples_per_feature_dependence.png
+.. image:: fig/fig2_alternative_samples_per_feature_dependence.png
     :scale: 100 %
     :align: center
     :alt: n_per_ftr dependence

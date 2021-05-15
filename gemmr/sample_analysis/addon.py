@@ -521,9 +521,9 @@ def weights_pc_cossim(estr, X, Y, Xorig, Yorig, x_align_ref, y_align_ref,
         metric='cosine'
     )
     results['x_weights_pc_cossim'] = \
-        xr.full_like(results.x_weights, x_weights_pc_cossim)
+        results.x_weights.copy(data=x_weights_pc_cossim)
     results['y_weights_pc_cossim'] = \
-        xr.full_like(results.y_weights, y_weights_pc_cossim)
+        results.y_weights.copy(data=y_weights_pc_cossim)
 
 
 def mk_scorers_for_cv(n_between_modes=1):
@@ -553,6 +553,11 @@ def cv(estr, X, Y, Xorg, Yorig, x_align_ref, y_align_ref, results, **kwargs):
 
     * kwargs['cvs']: list of (label, cross-validator)
     * kwargs['scorers']: can be created by :func:`mk_scorers_for_cv`
+
+    Optional keyword-arguments:
+
+    * kwargs['fit_params']: dict
+        passed to cross_validate
 
     Provides outcome metrics ``between_covs_cv``, ``between_corrs_cv``,
     ``x_weights_cv`` and ``y_weights_cv``.
@@ -593,6 +598,11 @@ def cv(estr, X, Y, Xorg, Yorig, x_align_ref, y_align_ref, results, **kwargs):
     # assume `scorers` contains cov_m? and corr_m? scorers
     n_score_modes = len(scorers) // 2
 
+    try:
+        fit_params = kwargs['fit_params']
+    except KeyError:
+        fit_params = dict()
+
     covs = np.nan * np.empty((len(cvs), n_score_modes))
     corrs = np.nan * np.empty((len(cvs), n_score_modes))
     x_weights = np.nan * np.empty((len(cvs), X.shape[1], estr.n_components))
@@ -607,6 +617,8 @@ def cv(estr, X, Y, Xorg, Yorig, x_align_ref, y_align_ref, results, **kwargs):
             cv=cv,
             return_estimator=True,
             verbose=0,
+            fit_params=fit_params,
+            error_score='raise'
         )
 
         covs[cvi] = [scores['test_cov_m{}'.format(mi)].mean()

@@ -6,7 +6,7 @@ from scipy.stats import pearsonr
 from sklearn.base import clone
 from sklearn.utils import check_random_state
 
-from gemmr.generative_model import setup_model, generate_data
+from gemmr.generative_model import GEMMR
 from gemmr.estimators import SVDPLS, SVDCCA, NIPALSPLS, NIPALSCCA, SingularMatrixError
 from gemmr.estimators.vanilla import _S_invsqrt
 from gemmr.estimators.helpers import cov_transform_scorer, pearson_transform_scorer
@@ -29,9 +29,10 @@ def _test_estrs_equal(model, estr1, estr2, n=1000):
 
         print('pxy', px, py)
 
-        Sigma = setup_model(model, random_state=rng, px=px, py=py, ax=ax, ay=ay, r_between=r_latent, return_full=False, verbose=False)
-        X, Y = generate_data(Sigma, px, n, rng)
-        Xtest, Ytest = generate_data(Sigma, px, n, rng)
+        gm = GEMMR(model, random_state=rng, px=px, py=py, ax=ax, ay=ay,
+                   r_between=r_latent, verbose=False)
+        X, Y = gm.generate_data(n, random_state=rng)
+        Xtest, Ytest = gm.generate_data(n, random_state=rng)
 
         if py == 1:
             Y = Y[:, 0]
@@ -226,10 +227,9 @@ def test_xy_reversed():
             ('pls', SVDPLS(n_components=1, scale=False, std_ddof=1)),
         ]:
 
-            Sigma = setup_model(model, random_state=rng, px=px, py=py, ax=ax,
-                                ay=ay, r_between=r_latent, return_full=False,
-                                verbose=False)
-            X, Y = generate_data(Sigma, px, n, rng)
+            gm = GEMMR(model, random_state=rng, px=px, py=py, ax=ax,
+                       ay=ay, r_between=r_latent, verbose=False)
+            X, Y = gm.generate_data(n, random_state=rng)
 
             estr1 = clone(estr).fit(X, Y)
             estr2 = clone(estr).fit(Y, X)

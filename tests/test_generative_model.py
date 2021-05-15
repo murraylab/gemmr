@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.spatial.distance import cosine as cosdist
 
 from numpy.testing import assert_raises, assert_allclose, assert_equal, assert_warns, assert_array_almost_equal
 
@@ -14,10 +15,153 @@ from gemmr.generative_model import _check_subspace_dimension, _mk_Sigmaxy, \
     _generate_random_dominant_subspace_rotations, _generate_dominant_subspace_rotations_from_opti, \
     _add_lowvariance_subspace_components, _add_lowvariance_subspace_component_1dim, _Sigmaxy_negative_min_eval, \
     _assemble_Sigmaxy_pls, _assemble_Sigmaxy_cca, calc_schur_complement
+from gemmr.estimators import SVDCCA, SVDPLS
 
+
+def _align(x, y):
+    for i in range(x.shape[1]):
+        if np.dot(x[:, i], y[:, i]) < 0:
+            x[:, i] *= -1
+    return x
+
+
+def _test_jcov(model, estr, rs, decimal):
+    for px, py in [(2, 4), (16, 8), (32, 32)]:
+        for r_between in rs:
+            for ax, ay in [(0, 0), (-.5, -1.), (-.25, -.75)]:
+                gemmr = GEMMR(model=model, px=px, py=py, r_between=r_between, ax=ax, ay=ay)
+                if model == 'cca':
+                    JointCovarianceModel = JointCovarianceModelCCA
+                elif model == 'pls':
+                    JointCovarianceModel = JointCovarianceModelPLS
+                else:
+                    raise ValueError(f'Invalid model: {model}')
+                jcov = JointCovarianceModel.from_jcov_model(gemmr, random_state=0)
+
+                assert_allclose(gemmr.true_corrs_, jcov.true_corrs_, atol=0.01, rtol=1e-6)
+
+                _align(jcov.U_latent_, gemmr.U_latent_)
+                _align(jcov.V_latent_, gemmr.V_latent_)
+                assert_array_almost_equal(gemmr.U_latent_, jcov.U_latent_, decimal=decimal)
+                assert_array_almost_equal(gemmr.V_latent_, jcov.V_latent_, decimal=decimal)
+
+
+def test_JointCovarianceModel():
+    _test_jcov('cca', SVDCCA(n_components=1), [.3], 1)
+    _test_jcov('cca', SVDCCA(n_components=1), [.5, .7, .9], 2)
+    _test_jcov('pls', SVDPLS(n_components=1), [.3, .5], 1)
+    _test_jcov('pls', SVDPLS(n_components=1), [.7, .9], 2)
+
+
+def test_GEMMR():
+    assert_raises(ValueError, GEMMR, 'cca', max_n_sigma_trials=0)
+    assert_raises(ValueError, GEMMR, 'cca',  c1x=2)
+    assert_raises(ValueError, GEMMR, 'cca',  c1y=.5)
+    assert_raises(ValueError, GEMMR, 'BLA')
+    assert_raises(ValueError, GEMMR, 'cca', a_between=.2)
+    assert_raises(ValueError, GEMMR, 'pls', ax=2)
+    assert_raises(ValueError, GEMMR, 'cca', ay=.2)
+    assert_raises(ValueError, GEMMR, 'cca', r_between=-.1)
+    assert_raises(ValueError, GEMMR, 'pls', r_between=1.1)
+    assert_warns(UserWarning, GEMMR, 'cca', a_between=0)
+    assert_raises(ValueError, GEMMR, 'cca',  px=3, cx=[1,2])
+    assert_raises(ValueError, GEMMR, 'cca',  py=2, cy=[1,2,3])
+    assert_raises(ValueError, GEMMR, 'cca',  px=4, py=4, qx=2, qy=3, m=3)
+
+    r_between = 0.3
+    Sigma = GEMMR('cca', px=2, py=2, ax=0, ay=0, r_between=r_between, m=1).Sigma_
+    SigmaXY = Sigma[:2, 2:]
+    r_hat = np.linalg.svd(SigmaXY, full_matrices=False, compute_uv=False)
+    assert_array_almost_equal(r_hat, [r_between, 0])
+
+
+def test_generative_model_class():
+    def _test_gm(gm):
+        assert hasattr(gm, 'm')
+        assert hasattr(gm, 'px')
+        assert hasattr(gm, 'py')
+        assert hasattr(gm, 'ax')
+        assert hasattr(gm, 'ay')
+        assert hasattr(gm, 'random_state')
+        assert hasattr(gm, 'Sigma_')
+        assert hasattr(gm, 'true_assocs_')
+        assert hasattr(gm, 'true_corrs_')
+        assert hasattr(gm, 'U_latent_')
+        assert hasattr(gm, 'V_latent_')
+        assert hasattr(gm, 'latent_expl_var_ratios_x_')
+        assert hasattr(gm, 'latent_expl_var_ratios_y_')
+        assert hasattr(gm, 'latent_mode_vector_algo_')
+        assert hasattr(gm, 'generate_data')
+
+    gemmr = GEMMR('cca')
+    _test_gm(gemmr)
+    _test_gm(JointCovarianceModelCCA.from_jcov_model(gemmr))
+    _test_gm(JointCovarianceModelPLS.from_jcov_model(gemmr))
+
+
+def _test_jcov_from_other_jcov(gemmr, estr, Jcov, n_per_ftr=512):
+    n = (gemmr.px + gemmr.py) * n_per_ftr
+    X, Y = gemmr.generate_data(n)
+    estr.fit(X, Y)
+
+    jcov = Jcov.from_jcov_model(gemmr)
+
+    dissim = 1 - min(
+        np.abs(1 - cosdist(estr.x_rotations_[:, 0], jcov.U_latent_[:, 0])),
+        np.abs(1 - cosdist(estr.y_rotations_[:, 0], jcov.V_latent_[:, 0])),
+    )
+    assert dissim < 0.03
+
+
+def _test_jcov_from_same_jcov(gemmr, Jcov):
+    jcov = Jcov.from_jcov_model(gemmr)
+
+    assert np.isclose(gemmr.px, jcov.px)
+    assert np.isclose(gemmr.py, jcov.py)
+    assert np.isclose(gemmr.m, jcov.m)
+    assert np.isclose(gemmr.ax, jcov.ax)
+    assert np.isclose(gemmr.ay, jcov.ay)
+
+    assert np.allclose(gemmr.Sigma_, jcov.Sigma_)
+
+    dissim = 1 - min(
+        np.abs(1 - cosdist(gemmr.U_latent_[:, 0], jcov.U_latent_[:, 0])),
+        np.abs(1 - cosdist(gemmr.V_latent_[:, 0], jcov.V_latent_[:, 0])),
+    )
+    assert dissim < 0.001
+
+    assert np.allclose(gemmr.true_assocs_, jcov.true_assocs_)
+    assert np.allclose(gemmr.true_corrs_, jcov.true_corrs_)
+
+    assert np.allclose(gemmr.latent_expl_var_ratios_x_,
+                       jcov.latent_expl_var_ratios_x_)
+    assert np.allclose(gemmr.latent_expl_var_ratios_y_,
+                       jcov.latent_expl_var_ratios_y_)
+
+
+def test_jcov_from_jcov():
+    cca = SVDCCA()
+    pls = SVDPLS()
+    for px in [2, 4, 8, 16, 32]:
+        for py in [px, px + 4]:
+            for ax in [-1.5, -1, -.5]:
+                for ay in [-1.5, -1, -.5]:
+                    for r in [.3, .5]:
+                        gemmr = GEMMR('cca', px=px, py=py, ax=ax, ay=ay,
+                                      r_between=r)
+                        _test_jcov_from_same_jcov(gemmr,
+                                                  JointCovarianceModelCCA)
+                        _test_jcov_from_other_jcov(gemmr, pls,
+                                                   JointCovarianceModelPLS)
+
+                        gemmr = GEMMR('pls', px=px, py=py, ax=ax, ay=ay,
+                                      r_between=r)
+                        _test_jcov_from_same_jcov(gemmr,
+                                                  JointCovarianceModelPLS)
+                        _test_jcov_from_other_jcov(gemmr, cca,
+                                                   JointCovarianceModelCCA)
 
 def test_setup_model():
-
     assert_raises(ValueError, setup_model, 'cca', max_n_sigma_trials=0)
     assert_raises(ValueError, setup_model, 'cca',  c1x=2)
     assert_raises(ValueError, setup_model, 'cca',  c1y=.5)
@@ -33,9 +177,9 @@ def test_setup_model():
     assert_raises(ValueError, setup_model, 'cca',  px=4, py=4, qx=2, qy=3, m=3)
 
     res = setup_model('cca', px=2, py=2, return_full=True)
-    assert len(res) == 12
+    assert len(res) == 14
     res = setup_model('pls', px=2, py=2, return_full=True)
-    assert len(res) == 12
+    assert len(res) == 14
 
     r_between = 0.3
     Sigma = setup_model('cca', px=2, py=2, ax=0, ay=0, r_between=r_between, m=1, return_full=False)
@@ -373,3 +517,25 @@ def test_generate_data():
     assert len(X) == len(Y)
     assert X.shape[1] == px
     assert Y.shape[1] == py
+
+
+def _test_generated_data_consistency_with_model(model):
+    estr = dict(cca=SVDCCA(), pls=SVDPLS())[model]
+    for px in [2, 4, 32]:
+        py = px + 2
+        for r_between in [.9, .7, .5, .3, .2]:
+            for ax in [0, -.5, -1]:
+                gm = GEMMR(model, px=px, py=py, r_between=r_between,
+                           ax=ax, ay=ax, random_state=0)
+                n_per_ftr = 512
+                for random_state in range(2):
+                    X, Y = gm.generate_data(n=(px + py) * n_per_ftr,
+                                            random_state=random_state)
+                    estr.fit(X, Y)
+                    assert_allclose(estr.corrs_[0], r_between,
+                                    rtol=1e-2, atol=0.05)
+
+
+def test_generated_data_consistency_with_model():
+    for model in ['cca', 'pls']:
+        _test_generated_data_consistency_with_model(model)

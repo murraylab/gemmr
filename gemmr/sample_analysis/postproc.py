@@ -9,6 +9,7 @@ from scipy.stats import spearmanr
 __all__ = ['power', 'remove_between_assocs_perm',
            'weights_pairwise_cossim_stats',
            'scores_pairwise_spearmansim_stats',
+           'loadings_pairwise_pearsonsim_stats',
            'remove_weights_loadings', 'remove_test_scores']
 
 
@@ -25,7 +26,7 @@ def power(res, alpha=0.05):
         significance level
     """
     p_values = \
-        ((res.between_assocs_perm > res.between_assocs).sum('perm') + 1) / \
+        ((res.between_assocs_perm >= res.between_assocs).sum('perm') + 1) / \
         (len(res.perm) + 1)
     res['power'] = (p_values < alpha).mean('rep')
 
@@ -41,7 +42,7 @@ def remove_between_assocs_perm(res):
     del res['between_assocs_perm']
 
 
-def _pairwise_similarities(w, metric='cosine'):
+def _pairwise_similarities(w, distance_metric='cosine'):
     """Calculate pairwise similarities.
 
     Only features that are present for all samples are considered.
@@ -57,7 +58,7 @@ def _pairwise_similarities(w, metric='cosine'):
         array of similarities
     """
     mask = np.isfinite(w).all(0)
-    sims = np.abs(1 - pdist(w[:, mask], metric=metric))
+    sims = np.abs(1 - pdist(w[:, mask], metric=distance_metric))
     return sims
 
 
@@ -101,7 +102,7 @@ def _calc_pairwise_similarity_stats(pairwise_similarities, qs=(.025, .5, .975)):
 
 
 def pairwise_similarity_stats(res, outcome, x_feature_dim, y_feature_dim,
-                              result_label, metric='cosine',
+                              result_label, distance_metric='cosine',
                               qs=(.025, .5, .975)):
     """Calculate pairwise similarities between outcomes for all pairs of
     repetitions.
@@ -122,7 +123,7 @@ def pairwise_similarity_stats(res, outcome, x_feature_dim, y_feature_dim,
     result_label : str
         pairwise similarities are stored in ``res`` as ``x_[result_label`` and
         ``y_[result_label]``
-    metric : str
+    distance_metric : str
         metric used to calculate similarities. Can be anything understood by
         :func:`scipy.spatial.distance.pdist`.
     qs : tuple of floats between 0 and 1
@@ -131,7 +132,7 @@ def pairwise_similarity_stats(res, outcome, x_feature_dim, y_feature_dim,
     x_sims = xr.apply_ufunc(
         _pairwise_similarities,
         res['x_{}'.format(outcome)],
-        kwargs=dict(metric=metric),
+        kwargs=dict(distance_metric=distance_metric),
         input_core_dims=[['rep', x_feature_dim]],
         output_core_dims=[['reprep']],
         vectorize=True,
@@ -139,7 +140,7 @@ def pairwise_similarity_stats(res, outcome, x_feature_dim, y_feature_dim,
     y_sims = xr.apply_ufunc(
         _pairwise_similarities,
         res['y_{}'.format(outcome)],
-        kwargs=dict(metric=metric),
+        kwargs=dict(distance_metric=distance_metric),
         input_core_dims=[['rep', y_feature_dim]],
         output_core_dims=[['reprep']],
         vectorize=True,
@@ -168,7 +169,7 @@ def weights_pairwise_cossim_stats(res, qs=(.025, .5, .975)):
                               x_feature_dim='x_feature',
                               y_feature_dim='y_feature',
                               result_label='weights_pairwise_cossim_stats',
-                              metric='cosine', qs=qs)
+                              distance_metric='cosine', qs=qs)
 
 
 def scores_pairwise_spearmansim_stats(res, qs=(.025, .5, .975)):
@@ -189,8 +190,29 @@ def scores_pairwise_spearmansim_stats(res, qs=(.025, .5, .975)):
                               x_feature_dim='test_sample',
                               y_feature_dim='test_sample',
                               result_label='scores_pairwise_spearmansim_stats',
-                              metric=lambda x, y: 1 - spearmanr(x, y)[0],
+                              distance_metric=lambda x, y: 1 - spearmanr(x, y)[0],
                               qs=qs)
+
+
+def loadings_pairwise_pearsonsim_stats(res, qs=(.025, .5, .975)):
+    """Calculate Pearson correlation between loadings for all pairs of
+    repetitions.
+
+    Provides outcome metrics ``x_loadings_pairwise_pearsonsim_stats`` and
+    ``y_loadings_pairwise_pearsonsim_stats``.
+
+    Parameters
+    ----------
+    res : xr.Dataset
+        comprising all analysis outcomes
+    qs : tuple of floats between 0 and 1
+        quantiles to calculate
+    """
+    pairwise_similarity_stats(res, outcome='loadings',
+                              x_feature_dim='x_orig_feature',
+                              y_feature_dim='y_orig_feature',
+                              result_label='loadings_pairwise_pearsonsim_stats',
+                              distance_metric='correlation', qs=qs)
 
 
 def remove_weights_loadings(res):

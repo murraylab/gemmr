@@ -20,7 +20,7 @@ def test_calc_p_value():
     Y = X
     n_permutations=3
     p_value = calc_p_value(estr, X, Y, permutations=n_permutations)
-    assert np.isclose(p_value, 1./(n_permutations+1))
+    assert np.isclose(p_value, 1.)
 
 
 def test_analyze_subsampled_and_resampled():

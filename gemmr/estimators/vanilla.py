@@ -47,10 +47,11 @@ class SVDPLS(BaseEstimator):
         Identical to covs_. `assocs_`` is the common identifier used in in
         ``SVDPLS``, ``SVDCCA``, ``NIPALSPLS`` and ``NIPALSCCA`` for the
         association strength that is optimized by each particular method
-
+    corrs_ : np.ndarray (n_components_,)
+        Pearson correlations between `X` and `Y` scores for each component
     """
 
-    def __init__(self, n_components=1, covariance='empirical', scale=True,
+    def __init__(self, n_components=1, covariance='empirical', scale=False,
                  std_ddof=0, calc_loadings=False):
         self.n_components = n_components
         self.covariance = covariance
@@ -124,7 +125,15 @@ class SVDPLS(BaseEstimator):
         return X, Y
 
     def _postprocess(self, X, Y, U, V, s):
-        self.covs_ = s
+        self.covs_ = s[:self.n_components]
+
+        x_scores = np.dot(X, U[:, :self.n_components])
+        y_scores = np.dot(Y, V[:, :self.n_components])
+        self.corrs_ = np.array([
+            pearsonr(x_scores[:, c], y_scores[:, c])[0]
+            for c in range(self.n_components)
+        ])
+
         return U, V, s
 
     def _calc_K(self, between_cov, X, Y):
@@ -311,7 +320,7 @@ class SVDCCA(SVDPLS, CanonicalCorrelationScorerMixin):
             U /= np.linalg.norm(U, axis=0, keepdims=True)
             V /= np.linalg.norm(V, axis=0, keepdims=True)
 
-        self.corrs_ = s
+        self.corrs_ = s[:self.n_components]
 
         return U, V, s
 
@@ -416,9 +425,9 @@ class NIPALSPLS(sklearn.cross_decomposition.PLSCanonical):
 
         # return consistently shaped Y rotations, scores
         if y_is_1d:
-            self.y_scores_ = self.y_scores_[:, 0]
-        else:
-            self.y_rotations_ = self.y_rotations_.reshape(-1, 1)
+            # NOTE: sklearn has deprecated "x_scores_" and "y_scores_", remove eventually!
+            self._y_scores = self.y_scores_[:, 0]
+            self.y_rotations_ = self.y_rotations_[:, 0]
 
         return self
 
@@ -458,8 +467,8 @@ class NIPALSCCA(sklearn.cross_decomposition.CCA):
 
         # return consistently shaped Y rotations, scores
         if y_is_1d:
-            self.y_scores_ = self.y_scores_[:, 0]
-        else:
-            self.y_rotations_ = self.y_rotations_.reshape(-1, 1)
+            # NOTE: sklearn has deprecated "x_scores_" and "y_scores_", remove eventually!
+            self._y_scores = self.y_scores_[:, 0]
+            self.y_rotations_ = self.y_rotations_[:, 0]
 
         return self

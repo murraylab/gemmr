@@ -21,6 +21,7 @@ def test__do_fit_lm():
         ay=-tmp,
         latent_expl_var_ratios_x=tmp,#.expand_dims(mode=[0]),
         latent_expl_var_ratios_y=tmp,#.expand_dims(mode=[0]),
+        between_corrs_true=tmp.r
     ))
     lm, X, y, coeff_names = do_fit_lm(
         ds, n_reqs, include_pc_var_decay_constants=True, include_latent_explained_vars=True, verbose=True
@@ -110,7 +111,7 @@ def test__get_lm_coefs():
         assert intercept > 0
         assert len(coefs) == n_coefs
 
-    _check(get_lm_coefs('cca', 'combined', target_error=.1, target_power=0.9, data_home=None), 2)
+    _check(get_lm_coefs('cca', 'combined', target_error=.1, target_power=0.9, data_home=None), 3)
     _check(get_lm_coefs('pls', 'combined', target_error=.1, target_power=0.9, data_home=None), 3)
 
     try:
@@ -134,18 +135,20 @@ def test_cca_sample_size():
     # assert_raises(NotImplementedError, cca_sample_size, 2, 3, target_power=.5)
     # assert_raises(NotImplementedError, cca_sample_size, 2, 3, target_error=.5)
 
-    assert_raises(NotImplementedError, cca_sample_size, 2, 3, algorithm='generative_model')
-    assert_raises(ValueError, cca_sample_size, 2, 3, algorithm='invalid_algorithm')
+    assert_raises(NotImplementedError, cca_sample_size, 2, 3, -1, -1.2, algorithm='generative_model')
+    assert_raises(ValueError, cca_sample_size, 2, 3, 0, -3, algorithm='invalid_algorithm')
 
     rs = (1./2, 1./4, 3./4)
-    res = cca_sample_size(2, 3, rs=rs)
+    res = cca_sample_size(2, 3, -.1, -10.2, rs=rs)
     assert_allclose(np.asarray(sorted(list(res.keys()))), np.asarray(sorted(rs)))
     assert np.all(np.array(list(res.values())) > 0)
 
-    X = np.empty((5, 2))
-    Y = np.empty((5, 3))
+    np.random.seed(0)
+    X = np.random.normal(size=(5, 2))
+    Y = np.random.normal(size=(5, 3))
     res2 = cca_sample_size(X, Y, rs=rs)
-    assert res == res2
+    for r in rs:
+        assert r in res2
 
 
 def test_pls_sample_size():
@@ -170,13 +173,13 @@ def test_pls_sample_size():
 
 def test_cca_req_corr():
 
-    assert_raises(NotImplementedError, cca_req_corr, 2, 3, 10, algorithm='generative_model')
-    assert_raises(ValueError, cca_req_corr, 2, 3, 10, algorithm='invalid_algorithm')
+    assert_raises(NotImplementedError, cca_req_corr, 2, 3, -1, -1, 10, algorithm='generative_model')
+    assert_raises(ValueError, cca_req_corr, 2, 3, -1, -1, 10, algorithm='invalid_algorithm')
 
-    r_req = cca_req_corr(2, 3, 0)
+    r_req = cca_req_corr(2, 3, -.8, -1.1, 0)
     assert 0 <= r_req <= 1
 
-    r_req = cca_req_corr(2, 3, 1e6)
+    r_req = cca_req_corr(2, 3, -.2, -10, 1e6)
     assert 0 <= r_req <= 1
 
 

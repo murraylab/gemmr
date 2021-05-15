@@ -1,7 +1,8 @@
 import numpy as np
 import xarray as xr
 
-from numpy.testing import assert_raises, assert_array_almost_equal
+from numpy.testing import assert_raises, assert_array_almost_equal, \
+    assert_equal
 from xarray.testing import assert_allclose as assert_xr_allclose
 
 from gemmr.data import generate_example_dataset
@@ -96,6 +97,51 @@ def test_rank_based_inverse_normal_trafo():
     outq = np.quantile(out, [.025, .25, .5, .75, .975])
 
     assert_array_almost_equal(xq, outq, decimal=3)
+
+    # test NaNs in input data
+
+    x = np.arange(15.).reshape(-1, 3)
+    x[1, 1] = np.nan
+    x[3, 2] = np.nan
+    x[4, 2] = np.nan
+    out = rank_based_inverse_normal_trafo(x)
+    print(out)
+    assert np.isnan(out[1, 1]) & np.isnan(out[3,2]) & np.isnan(out[4, 2])
+    print(np.mean(np.ma.masked_invalid(out), axis=0))
+    assert_array_almost_equal(
+        np.mean(np.ma.masked_invalid(out), axis=0),
+        0
+    )
+
+    x = np.random.normal(size=(10, 3))
+    x[1, 1] = np.nan
+    x[3, 2] = np.nan
+    x[8, 2] = np.nan
+    out = rank_based_inverse_normal_trafo(x)
+    assert np.isnan(out[1, 1]) & np.isnan(out[3,2]) & np.isnan(out[8, 2])
+    assert_array_almost_equal(
+       np.mean(np.ma.masked_invalid(out), axis=0),
+       0
+    )
+
+    for col in range(3):
+        out_mask = np.isfinite(out[:, col])
+
+        out_col = rank_based_inverse_normal_trafo(x[:, col])
+        out_col_mask = np.isfinite(out_col)
+
+        assert_equal(out_mask, out_col_mask)
+        assert_array_almost_equal(
+            out[:,col][out_mask],
+            out_col[out_col_mask]
+        )
+
+        x_col = x[:, col]
+        out2 = rank_based_inverse_normal_trafo(x_col[np.isfinite(x_col)])
+        assert_array_almost_equal(
+            out2,
+            out[:, col][out_mask]
+        )
 
 
 def test_pc_spectrum_decay_constant():

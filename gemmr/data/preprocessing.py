@@ -7,10 +7,13 @@ from scipy.stats import zscore
 
 from statsmodels.stats.correlation_tools import cov_nearest
 
+from tqdm import trange
+
 from ..util import rank_based_inverse_normal_trafo
 
 
-__all__ = ['preproc_smith']
+__all__ = ['preproc_smith', 'preproc_minimal', 'select_sm_features',
+           'prepare_confounders', 'deconfound']
 
 
 _smith_feature_names = tuple(
@@ -58,7 +61,7 @@ _smith_feature_names = tuple(
     'Sadness_Unadj DSM_Hype_Raw DSM_Adh_Raw DSM_Inat_Raw'.split())
 
 
-def deconfound(X, confounders):
+def deconfound(X, confounders, demean_confounders=False):
     """Deconfound a data matrix.
 
     Parameters
@@ -67,15 +70,18 @@ def deconfound(X, confounders):
         data matrix to be confounded
     confounders : np.ndarray (n_samples, n_confounds)
         confound matrix
+    demean_confounders : bool
+        if ``True`` demeaned confounders are used
 
     Returns
     -------
     deconfounded : np.ndarray (n_samples, n_features)
         deconfounded data matrix
     """
-    deconfound_beta = np.linalg.inv(np.dot(confounders.T, confounders)) \
-        .dot(confounders.T).dot(X)
-    return X - np.dot(confounders, deconfound_beta)
+    if demean_confounders:
+        confounders = confounders - confounders.mean(0, keepdims=True)
+    deconfound_beta = np.linalg.pinv(confounders) @ X
+    return X - confounders @ deconfound_beta
 
 
 def preproc_smith(fc, sm,
@@ -84,7 +90,8 @@ def preproc_smith(fc, sm,
                   hcp_confounders=False,
                   hcp_confounder_software_version=True,
                   squared_confounders=False,
-                  hcp_data_dict_correct_pct_to_t=False):
+                  hcp_data_dict_correct_pct_to_t=False,
+                  include_N2=True):
     """Data preprocessing pipeline from Smith et al. (2015).
 
     Parameters
@@ -94,9 +101,10 @@ def preproc_smith(fc, sm,
     sm : pd.DataFrame (n_samples, n_Y_features)
         behavioral and demographic data matrix. Names of features to include,
         and confounds must be column names
-    feature_names : None or list-like
+    feature_names : None, slice or list-like
         names of features to use, names must be columns in ``sm``. If ``None``
-        default feature names are used
+        default (i.e. from Smith et al. 2015, applicable to HCP data) feature
+        names are used
     final_sm_deconfound : bool
         if ``True`` the subject measure data matrix will be deconfounded again
         as a very last preprocessing step, as in Smith et al. (2015). In that
@@ -120,6 +128,10 @@ def preproc_smith(fc, sm,
         concerns only feature_names from HCP data dictionary. If ``True``
         a number of feature_names are replaced, see
         :func:`_check_feature_names`.
+    include_N2 : bool
+        if True, the data matrix, normalized by the absolute value of the mean
+        of each feature, will be used as additional features, concatenating it
+        horizontally to the z-scored data matrix
 
     Returns
     -------
@@ -136,11 +148,13 @@ def preproc_smith(fc, sm,
             whitened dataset Y
         * Y_raw : np.ndarray (n_samples, n_Y_features)
             unprocessed Y data comprising only the selected features (i.e.
-            the matrix S4)
+            the matrix S4_raw)
         * feature_names : list
             ordered list of feature names corresponding to the columns of Y
         * X_pc_axes : np.ndarray (n_X_features, n_components)
             X principal component axes
+        * confounders : np.ndarray (n_samples, n_features)
+            confounder data matrix
 
     References
     ----------
@@ -152,13 +166,14 @@ def preproc_smith(fc, sm,
     confounders = prepare_confounders(
         sm, confounders=confounders, hcp_confounders=hcp_confounders,
         hcp_confounder_software_version=hcp_confounder_software_version,
-        squared_confounders=squared_confounders)
+        squared_confounders=squared_confounders,
+        impute0=True)
 
-    uu1, uu1_white, vv1 = preproc_fc(fc, confounders)
+    uu1, uu1_white, vv1 = preproc_fc(fc, confounders, include_N2=include_N2)
 
-    uu2, uu2_white, S4, feature_names = preproc_sm(
-        confounders, sm, feature_names=feature_names,
-        final_deconfound=final_sm_deconfound,
+    uu2, uu2_white, S4_raw, feature_names = preproc_sm(
+        sm, confounders, final_deconfound=final_sm_deconfound,
+        feature_names=feature_names,
         hcp_data_dict_correct_pct_to_t=hcp_data_dict_correct_pct_to_t)
 
     return dict(
@@ -166,14 +181,15 @@ def preproc_smith(fc, sm,
         Y=uu2,
         X_whitened=uu1_white,
         Y_whitened=uu2_white,
-        Y_raw=S4,
+        Y_raw=S4_raw,
         feature_names=feature_names,
         X_pc_axes=vv1,
+        confounders=confounders,
     )
 
 
-def preproc_sm(confounders, sm, final_deconfound=True,
-               feature_names=None, hcp_data_dict_correct_pct_to_t=True,
+def preproc_sm(sm, confounders, final_deconfound=True, feature_names=None,
+               hcp_data_dict_correct_pct_to_t=True,
                nearest_psd_threshold=1e-6):
     """Preprocessing of subject measures.
 
@@ -186,9 +202,10 @@ def preproc_sm(confounders, sm, final_deconfound=True,
         and confounds must be column names    final_deconfound : bool
         if ``True`` the final scores are once more deconfounded before they
         are returned
-    feature_names : None or list-like
+    feature_names : None, slice or list-like
         names of features to use, names must be columns in ``sm``. If ``None``
-        default feature names are used (``_smith_feature_names``)
+        default (i.e. from Smith et al. 2015, applicable to HCP data) feature
+        names are used
     hcp_data_dict_correct_pct_to_t : bool
         whether to correct HCP data dict names, see :func:`_check_features`
     nearest_psd_threshold : float
@@ -200,46 +217,19 @@ def preproc_sm(confounders, sm, final_deconfound=True,
         processed dataset Y
     uu2_white : np.ndarray (n_samples, n_Y_features)
         whitened processed dataset Y
-    S4 : np.ndarray (n_samples, n_Y_features)
+    S4_raw : np.ndarray (n_samples, n_Y_features)
         unprocessed Y data comprising only the selected features
     feature_names : list
         ordered list of feature names corresponding to the columns of Y
     """
+    S4_raw, S4_deconfounded, feature_names = prepare_sm(
+        sm, confounders, feature_names, hcp_data_dict_correct_pct_to_t)
 
-    feature_names = _check_features(feature_names,
-                                    hcp_data_dict_correct_pct_to_t)
-    total_n_features = len(feature_names)
-
-    # keep only available features
-    feature_names = [f for f in feature_names if f in sm]
-
-    S4 = sm[feature_names]
-    S4 = S4.values.astype(float)
-    assert S4.shape[1] == len(feature_names)
-    print('{} out of {} features found'.format(S4.shape[1], total_n_features))
-
-    # gaussianise
-    S4_INT = np.nan * np.empty_like(S4)
-    for c in range(S4.shape[1]):
-        data = S4[:, c]
-        is_finite = np.isfinite(data)
-        S4_INT[is_finite, c] = rank_based_inverse_normal_trafo(data[is_finite])
-
-    # deconfound, ignoring missing values
-    S4_deconfounded = np.nan * np.empty_like(S4)
-    for c in range(S4.shape[1]):
-        data = S4_INT[:, c]
-        is_finite = np.isfinite(data)
-        S4_deconfounded[is_finite, c] = zscore(deconfound(
-            data[is_finite].reshape(-1, 1),
-            zscore(confounders[is_finite])
-        )[:, 0]  # deconfound returns a matrix with 1 column
-                                               )
     # estimate covariance-matrix, ignoring missing values
     # NOTE: This is the n_subjects x n_subjects covariance matrix across
     # features!
-    S_cov = np.nan * np.empty((S4.shape[0], S4.shape[0]))
-    for i in range(len(S_cov)):
+    S_cov = np.nan * np.empty((S4_raw.shape[0], S4_raw.shape[0]))
+    for i in trange(len(S_cov), desc='subject', leave=False):
         for j in range(i + 1):
             mask = np.isfinite(S4_deconfounded[i]) \
                    & np.isfinite(S4_deconfounded[j])
@@ -256,7 +246,9 @@ def preproc_sm(confounders, sm, final_deconfound=True,
           np.linalg.svd(S_cov_psd, compute_uv=False, hermitian=True).min())
     print('rank S_cov =', np.linalg.matrix_rank(S_cov))
     print('rank S_cov_psd =', np.linalg.matrix_rank(S_cov_psd))
-    # PCA
+
+    # --- PCA ---
+
     dd2, uu2 = np.linalg.eigh(S_cov_psd)
     assert np.allclose((uu2**2).sum(0), 1)
     order = np.argsort(dd2)[::-1]
@@ -267,6 +259,9 @@ def preproc_sm(confounders, sm, final_deconfound=True,
     uu2_white = uu2 / uu2.std(0)
     uu2 = uu2 * (np.sqrt(dd2) / uu2.std(0)).reshape(1, -1)
 
+    # uu2 doesn't have mean 0, probably because of the way it's computed,
+    # i.e. with cov_nearest, ...
+    #assert np.allclose(uu2.mean(0), 0)
     assert np.allclose(uu2_white.var(0), 1)
     assert np.allclose(uu2.var(0), dd2)
 
@@ -275,18 +270,111 @@ def preproc_sm(confounders, sm, final_deconfound=True,
         uu2_white = deconfound(uu2_white, confounders)
         uu2 = deconfound(uu2, confounders)
 
-    return uu2, uu2_white, S4, feature_names
+    return uu2, uu2_white, S4_raw, feature_names
 
 
-def _check_features(feature_names, hcp_data_dict_correct_pct_to_t):
+def prepare_sm(sm, confounders, feature_names,
+               hcp_data_dict_correct_pct_to_t=True):
+    """Filter and transform subject-measure data matrix.
+
+    Selects features as indicated by argument ``feature_names``, applies
+    rank-based inverse normal transform, and decounfounds.
+
+    Parameters
+    ----------
+    sm : pd.DataFrame (n_samples, n_Y_features)
+        behavioral and demographic data matrix. Names of features to include,
+        and confounds must be column names    final_deconfound : bool
+        if ``True`` the final scores are once more deconfounded before they
+        are returned
+    confounders : np.ndarray (n_samples, n_features)
+        confounder data matrix
+    feature_names : None, slice or list-like
+        names of features to use, names must be columns in ``sm``. If ``None``
+        default (i.e. from Smith et al. 2015, applicable to HCP data) feature
+        names are used
+    hcp_data_dict_correct_pct_to_t : bool
+        whether to correct HCP data dict names, see :func:`_check_features`
+
+    Returns
+    -------
+    S4_raw : np.ndarray (n_samples, n_Y_features)
+        unprocessed Y data comprising only the selected features
+    S4_deconfounded : np.ndarray (n_samples, n_Y_features)
+        filtered and transformed data matrix (but still contains missing
+        values)
+    feature_names : list
+        ordered list of feature names corresponding to the columns of Y
+    """
+    S4_raw, feature_names = select_sm_features(sm, feature_names,
+                                               hcp_data_dict_correct_pct_to_t)
+
+    # gaussianise and deconfound
+    S4_deconfounded = np.nan * np.empty_like(S4_raw)
+    for c in range(S4_raw.shape[1]):
+        data = S4_raw[:, c]
+        is_finite = np.isfinite(data)
+        data_gauss = rank_based_inverse_normal_trafo(data[is_finite])
+        S4_deconfounded[is_finite, c] = zscore(deconfound(
+            data_gauss.reshape(-1, 1),  # comprising only the "finite" subjects
+            zscore(confounders[is_finite])  # use the same "finite" subjects
+        )[:, 0]  # deconfound returns a matrix with 1 column
+                                               )
+
+    return S4_raw, S4_deconfounded, feature_names
+
+
+def select_sm_features(sm, feature_names, hcp_data_dict_correct_pct_to_t):
+    """Select features from SM matrix.
+
+    Parameters
+    ----------
+    sm : pd.DataFrame (n_samples, n_Y_features)
+        behavioral and demographic data matrix. Names of features to include,
+        and confounds must be column names    final_deconfound : bool
+        if ``True`` the final scores are once more deconfounded before they
+        are returned
+    feature_names : None, slice or list-like
+        names of features to use, names must be columns in ``sm``. If ``None``
+        default (i.e. from Smith et al. 2015, applicable to HCP data) feature
+        names are used
+    hcp_data_dict_correct_pct_to_t : bool
+        whether to correct HCP data dict names, see :func:`_check_features`
+
+    Returns
+    -------
+    S4_raw : np.ndarray (n_samples, n_Y_features)
+        unprocessed Y data comprising only the selected features
+    feature_names : list
+        ordered list of feature names corresponding to the columns of Y
+    """
+    feature_names = _check_features(feature_names,
+                                    sm.columns.values,
+                                    hcp_data_dict_correct_pct_to_t)
+    total_n_features = len(feature_names)
+    # keep only available features
+    feature_names = [f for f in feature_names if f in sm]
+    S4_raw = sm[feature_names]
+    S4_raw = S4_raw.values.astype(float)
+    assert S4_raw.shape[1] == len(feature_names)
+    print(f'{S4_raw.shape[1]} out of {total_n_features} features found')
+    return S4_raw, feature_names
+
+
+def _check_features(feature_names, available_feature_names,
+                    hcp_data_dict_correct_pct_to_t):
     """Make sure feature names are unique.
 
     Parameters
     ----------
 
-    feature_names : None or list-like
+    feature_names : None, slice or list-like
         names of features to use, names must be columns in ``sm``. If ``None``
-        default feature names are used (``_smith_feature_names``)
+        default (i.e. from Smith et al. 2015, applicable to HCP data) feature
+        names are used
+    available_feature_names : iterable
+        all available feature names (used to retrieve feature names in case
+        ``feature_names`` is a ``slice``), ignored otherwise
     hcp_data_dict_correct_pct_to_t : bool
         if ``True`` replaces a number of feature names with "corrected" names,
         see Reference.
@@ -303,7 +391,13 @@ def _check_features(feature_names, hcp_data_dict_correct_pct_to_t):
     """
     if feature_names is None:
         feature_names = _smith_feature_names
-    feature_names = np.unique(feature_names)
+    elif isinstance(feature_names, slice):
+        feature_names = available_feature_names[feature_names]
+    # else: pass  # use feature_names as is
+    # unique feature_names, keeping order (dict is insertion ordered!)
+
+    feature_names = list(dict.fromkeys(feature_names))
+
     if hcp_data_dict_correct_pct_to_t:
         for old, new in [
             # ('ASR_Anxd_Pct', 'ASR_Anxd_T'),  # this is mentioned in
@@ -327,7 +421,7 @@ def _check_features(feature_names, hcp_data_dict_correct_pct_to_t):
     return feature_names
 
 
-def preproc_fc(fc, confounders):
+def preproc_fc(fc, confounders, include_N2=True):
     """Preprocess the neuroimaging data matrix.
 
     Parameters
@@ -336,6 +430,10 @@ def preproc_fc(fc, confounders):
         data matrix
     confounders : np.ndarray (n_samples, n_confounds)
         confound matrix
+    include_N2 : bool
+        if True, the data matrix, normalized by the absolute value of the mean
+        of each feature, will be used as additional features, concatenating it
+        horizontally to the z-scored data matrix
 
     Returns
     -------
@@ -353,10 +451,14 @@ def preproc_fc(fc, confounders):
         N = fc  # assume ``fc`` is np.ndarray
 
     N1 = zscore(N)
-    abs_mean_N = np.abs(np.mean(N, axis=0, keepdims=True))
-    N2 = zscore((N / abs_mean_N)[:, abs_mean_N[0] >= 0.1])
-    N3 = np.hstack([N1, N2])
+    if include_N2:
+        abs_mean_N = np.abs(np.mean(N, axis=0, keepdims=True))
+        N2 = zscore((N / abs_mean_N)[:, abs_mean_N[0] >= 0.1])
+        N3 = np.hstack([N1, N2])
+    else:
+        N3 = N1
     N4 = deconfound(N3, confounders)
+    N4 -= N4.mean(0, keepdims=True)
     print(N4.shape)
     # PCA
     uu1, ss1, vv1h = np.linalg.svd(N4, full_matrices=False)
@@ -368,6 +470,7 @@ def preproc_fc(fc, confounders):
     uu1_white = uu1
     uu1 = uu1 * ss1.reshape(1, -1)
 
+    assert np.allclose(uu1.mean(0), 0)
     assert np.allclose(uu1_white.var(0), 1)
     assert np.allclose(uu1.var(0), ss1**2)
 
@@ -384,6 +487,7 @@ def prepare_confounders(
         hcp_confounders=False,
         hcp_confounder_software_version=True,
         squared_confounders=False,
+        impute0=True,
         #headmotion_features=('movement_AbsoluteRMS_mean',
         #                     'movement_RelativeRMS_mean')
 ):
@@ -407,11 +511,14 @@ def prepare_confounders(
     squared_confounders : bool
         if ``True`` the squares of all confounders (except software version, if
         used) are used as additional confounders
+    impute0 : bool
+        if True, missing confound values are imputed with 0 (after an
+        inverse normal transformation)
 
     Returns
     -------
     confounders : np.ndarray (n_samples, n_features)
-        confounder data matrix
+        confounder data matrix, if impute0 is ``False`` it can have ``NaN``s
 
     Raises
     ------
@@ -424,11 +531,11 @@ def prepare_confounders(
         missing_confounders = [f for f in confounders if f not in sm]
         raise ValueError('Confounders not found: '
                          '{}'.format(missing_confounders))
-    confounders_matrix = sm[_confounders]
+    confounders_matrix = sm[_confounders].values
 
     if hcp_confounders:
         sm_confounders = sm[['Weight', 'Height', 'BPSystolic', 'BPDiastolic',
-                             'HbA1C', ]]
+                             'HbA1C', ]].values
         fs_confounders = sm[['FS_BrainSeg_Vol',
                              'FS_IntraCranial_Vol']].values ** (1. / 3)
         confounders_matrix = np.hstack([confounders_matrix, sm_confounders,
@@ -452,13 +559,155 @@ def prepare_confounders(
         confounders_matrix = np.hstack([confounders_matrix, reconvrs])
 
     if confounders_matrix.shape[1] > 0:
-        # impute 0 for missing values
-        print('{:.2f}% of values in confounders missing, imputing 0 for '
-              'these'.format(100 * (1 - np.isfinite(confounders_matrix).mean())))
 
-        confounders_matrix[~np.isfinite(confounders_matrix)] = 0
+        # inverse normal transform (this also results in mean 0)
+        confounders_matrix = \
+            rank_based_inverse_normal_trafo(confounders_matrix)
+
+        if impute0:
+            # impute 0 for missing values
+            print('{:.2f}% of values in confounders missing, imputing 0 for '
+                  'these'.format(
+                100 * (1 - np.isfinite(confounders_matrix).mean())))
+
+            confounders_matrix[~np.isfinite(confounders_matrix)] = 0
+
+        else:
+            print('{:.2f}% of values in confounders missing'.format(
+                100 * (1 - np.isfinite(confounders_matrix).mean()))
+            )
 
         # normalise
-        confounders_matrix = zscore(confounders_matrix)
+        confounders_matrix = zscore(confounders_matrix, nan_policy='omit')
 
     return confounders_matrix
+
+
+def preproc_minimal(fc, sm,
+                  feature_names=None, final_sm_deconfound=True,
+                  confounders=tuple(),
+                  hcp_confounders=False,
+                  hcp_confounder_software_version=True,
+                  squared_confounders=False,
+                  hcp_data_dict_correct_pct_to_t=False,
+                  confounds_impute0=False):
+    """Minimal data preprocessing pipeline.
+
+    Imputation can be chosen as an option for confounders. Subsequently, only
+    subjects without missing values in fc, sm and confounders are used. Both
+    FC and SM are processed identically: z-scored, deconfounded, z-scored
+    again, PCA.
+
+    Parameters
+    ----------
+    fc : np.ndarray, pd.DataFrame or xr.DataArray (n_samples, n_X_features)
+        neuroimaging data matrix
+    sm : pd.DataFrame (n_samples, n_Y_features)
+        behavioral and demographic data matrix. Names of features to include,
+        and confounds must be column names
+    feature_names : None or list-like
+        names of features to use, names must be columns in ``sm``. If ``None``
+        default feature names are used
+    confounders : tuple of str
+        column-names in ``sm`` to be used as confounders. If some are
+        not found a warning is issued and the code will continue without the
+        missing ones.
+    hcp_confounders : bool
+        if ``True`` 'Weight', 'Height', 'BPSystolic', 'BPDiastolic', 'HbA1C'
+        as well as the cubic roots of 'FS_BrainSeg_Vol', 'FS_IntraCranial_Vol'
+        are included as confounders
+    hcp_confounder_software_version : bool
+        if ``True`` and ``hcp_confounders`` is also ``True``, then the feature
+        'fMRI_3T_ReconVrs' (encoded as a dummy variable) is used as confounder
+    squared_confounders : bool
+        if ``True`` the squares of all confounders (except software version, if
+        used) are used as additional confounders
+    hcp_data_dict_correct_pct_to_t : bool
+        concerns only feature_names from HCP data dictionary. If ``True``
+        a number of feature_names are replaced, see
+        :func:`_check_feature_names`.
+    confounds_impute0 : bool
+        if True, missing confound values are imputed with 0 (after an
+        inverse normal transformation)
+
+    Returns
+    -------
+    preprocessed_data : dict
+        with items:
+
+        * X : np.ndarray (n_samples, n_X_features)
+            dataset X
+        * Y : np.ndarray (n_samples, n_Y_features)
+            dataset Y
+        * X_whitened : np.ndarray (n_samples, n_X_features)
+            whitened dataset X
+        * Y_whitened : np.ndarray (n_samples, n_Y_features)
+            whitened dataset Y
+        * Y_raw : np.ndarray (n_samples, n_Y_features)
+            unprocessed Y data comprising only the selected features (i.e.
+            the matrix S4_raw)
+        * feature_names : list
+            ordered list of feature names corresponding to the columns of Y
+        * X_pc_axes : np.ndarray (n_X_features, n_components)
+            X principal component axes
+        * Y_pc_axes : np.ndarray (n_Y_features, n_components)
+            Y principal component axes
+        * confounders : np.ndarray (n_samples, n_features)
+            confounder data matrix
+        * subjects_mask : np.ndarray (n_samples,) of bool
+            indicates which subjects have no missing values and have thus been
+            included in the outputs
+    """
+
+    confounders = prepare_confounders(
+        sm, confounders=confounders, hcp_confounders=hcp_confounders,
+        hcp_confounder_software_version=hcp_confounder_software_version,
+        squared_confounders=squared_confounders,
+        impute0=confounds_impute0)
+
+    sm_raw, feature_names = \
+        select_sm_features(sm, feature_names, hcp_data_dict_correct_pct_to_t)
+
+    subjects_mask = np.isfinite(fc).all(axis=1) \
+               & np.isfinite(sm_raw).all(axis=1) \
+               & np.isfinite(confounders).all(axis=1)
+    print(f'Using {subjects_mask.sum()} subjects which have no missing values')
+
+    fc = fc[subjects_mask]
+    sm_raw = sm_raw[subjects_mask]
+    confounders = confounders[subjects_mask]
+
+    def _minimal_preproc(X, confounders):
+        X = zscore(X)
+
+        Xd = deconfound(X, confounders)
+
+        Xdz = zscore(Xd)  # just to be safe that X has mean 0 for SVD (PCA)
+
+        _U, _s, _Vh = np.linalg.svd(Xdz, full_matrices=False)
+        V = _Vh.T
+
+        U_white = _U / _U.std(0, keepdims=True)
+        U = U_white * _s.reshape(1, -1)
+
+        assert np.allclose(U.mean(0), 0)
+        assert np.allclose(U_white.var(0), 1)
+        assert np.allclose(U.var(0), _s ** 2)
+
+        return U, U_white, V
+
+    UX, UX_white, VX = _minimal_preproc(fc, confounders)
+    UY, UY_white, VY = _minimal_preproc(sm_raw, confounders)
+
+    return dict(
+        X=UX,
+        Y=UY,
+        X_whitened=UX_white,
+        Y_whitened=UY_white,
+        Y_raw=sm_raw,
+        feature_names=feature_names,
+        X_pc_axes=VX,
+        Y_pc_axes=VY,
+        confounders=confounders,
+        subjects_mask=subjects_mask
+    )

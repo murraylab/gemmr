@@ -28,6 +28,7 @@ def do_fit_lm(
         include_latent_explained_vars=True,
         include_pdiff=False,
         verbose=False,
+        prefix=''
 ):
     """Fits a linear model to outcome data.
 
@@ -51,6 +52,8 @@ def do_fit_lm(
         model
     verbose : bool
         if ``True`` prints deltaAIC
+    prefix : str
+        prefix for outcome variables in ``ds``
 
     Returns
     -------
@@ -65,7 +68,7 @@ def do_fit_lm(
     """
     X, y, coeff_names = prep_data_for_lm(
         ds, n_reqs, include_latent_explained_vars,
-        include_pc_var_decay_constants, include_pdiff)
+        include_pc_var_decay_constants, include_pdiff, prefix=prefix)
 
     lm = LinearRegression().fit(X, y)
 
@@ -80,7 +83,8 @@ def do_fit_lm(
 
 
 def prep_data_for_lm(ds, n_reqs, include_latent_explained_vars,
-                     include_pc_var_decay_constants, include_pdiff):
+                     include_pc_var_decay_constants, include_pdiff,
+                     prefix=''):
     """Prepare outcome data for use with linear model.
 
     Constructs a predictor data matrix with columns representing linear
@@ -102,6 +106,8 @@ def prep_data_for_lm(ds, n_reqs, include_latent_explained_vars,
     include_pdiff : bool
         whether to include predictor for :math:`|p_X - p_Y|` in the linear
         model
+    prefix : str
+        prefix for outcome variables in ``ds``
 
     Returns
     -------
@@ -116,12 +122,13 @@ def prep_data_for_lm(ds, n_reqs, include_latent_explained_vars,
         log_n_reqs=np.log(n_reqs),
         ptot=ds.px + ds.py,
         pdiff=np.abs(ds.py - ds.px),
-        axPlusy=ds.ax + ds.ay,
-        latent_vars_xTimesy=ds.latent_expl_var_ratios_x
-                            * ds.latent_expl_var_ratios_y,
+        r_true=ds[f'{prefix}between_corrs_true'],
+        axPlusy=ds[f'{prefix}ax'] + ds[f'{prefix}ay'],
+        latent_vars_xTimesy=ds[f'{prefix}latent_expl_var_ratios_x']
+                            * ds[f'{prefix}latent_expl_var_ratios_y'],
     )).stack(it=('px', 'r', 'Sigma_id'))
     X = [
-        -np.log(lm_vars.r.values),
+        -np.log(lm_vars.r_true.values),
         np.log(lm_vars.ptot.values),  # np.log(log_n_crits_.px.values),
     ]
     coef_names = ['const', r'$-\log(r_\mathrm{true})$', r'$\log(p_X+p_Y)$', ]
@@ -197,8 +204,32 @@ def fit_linear_model(criterion, model, estr=None, tag=None, target_power=0.9,
         fitted model
     """
 
-    ds = load_outcomes(model, estr, tag, data_home).sel(mode=0)
-    ds = ds.sel(px=ds.px > 4)
+    if model == 'cca':
+        ds = xr.concat([
+            load_outcomes('sweep_cca_cca_random_sum+-2+0_wOtherModel',
+                          model='cca', data_home=data_home
+                          ).drop('Sigma_id'),
+            load_outcomes('sweep_cca_cca_random_sum+-3+-2_wOtherModel',
+                          model='cca', data_home=data_home
+                          ).drop('Sigma_id')
+        ], 'Sigma_id').sel(mode=0)
+        del ds['weight_selection_algorithm']
+
+    elif model == 'pls':
+        ds = xr.concat([
+            load_outcomes('sweep_pls_pls_random_sum+-2+0_wOtherModel',
+                          model='pls', data_home=data_home
+                          ).drop('Sigma_id'),
+            load_outcomes('sweep_pls_pls_random_sum+-3+-2_wOtherModel',
+                          model='pls', data_home=data_home
+                          ).drop('Sigma_id')
+        ], 'Sigma_id').sel(mode=0)
+        del ds['weight_selection_algorithm']
+
+    else:
+        raise ValueError(f'Invalid argument model: {model}')
+
+    ds = ds.sel(px=(ds.px > 4) & (ds.px < 128))
 
     if criterion == 'combined':
         n_req_per_ftr = calc_n_required_all_metrics(
@@ -219,7 +250,7 @@ def fit_linear_model(criterion, model, estr=None, tag=None, target_power=0.9,
 
     if model == 'cca':
         if include_pc_var_decay_constants is None:
-            include_pc_var_decay_constants = False
+            include_pc_var_decay_constants = True
         if include_latent_explained_vars is None:
             include_latent_explained_vars = False
     elif model == 'pls':
@@ -234,6 +265,7 @@ def fit_linear_model(criterion, model, estr=None, tag=None, target_power=0.9,
         ds, n_req,
         include_pc_var_decay_constants=include_pc_var_decay_constants,
         include_latent_explained_vars=include_latent_explained_vars,
+        include_pdiff=False,
         verbose=False,
     )
     return lm
@@ -324,7 +356,7 @@ def _check_axy(X, Y, ax, ay, expl_var_ratio=0.3):
     return ax, ay
 
 
-def _save_linear_model(model, data_home=None):
+def _save_linear_model(model, data_home=None, verbose=False):
     """Save linear model.
 
     Creates csv files with parameters for
@@ -347,12 +379,18 @@ def _save_linear_model(model, data_home=None):
     data_home : None or str
         if ``str`` indicates path where outcome data are stored,
         ``None`` is interpreted as default path
+    verbose : bool
+        if ``True`` intercept and coefficients of fitted linear model are
+        printed to stdout
 
     """
 
     lm = fit_linear_model(criterion='combined', model=model, target_power=0.9,
                           target_error=0.1, data_home=data_home)
     intercept, coefs = lm.intercept_, lm.coef_
+
+    if verbose:
+        print(f'intercept = {lm.intercept_}, coef = {lm.coef_}')
 
     fname = resource_filename(
         'gemmr', 'datasets/sample_size_lm_{}.csv'.format(model))
@@ -422,12 +460,13 @@ def get_lm_coefs(model, criterion, target_error, target_power, data_home):
 
 
 def cca_sample_size(
-        X, Y,
+        X, Y, ax=None, ay=None,
         rs=(.1, .3, .5),
         criterion='combined',
         algorithm='linear_model',
         target_power=0.9,
         target_error=0.1,
+        expl_var_ratio=0.5,
         data_home=None,
 ):
     """Suggest sample size for CCA.
@@ -444,6 +483,12 @@ def cca_sample_size(
     Y : np.ndarray (n_samples, n_Y_features) or int >= 2
         either a data matrix or directly the number of features for data matrix
         :math:`Y`
+    ax : float < 0 or None
+        principal component spectrum decay constant, if ``X`` is not a data
+        matrix, ``None`` otherwise
+    ay : float < 0 or None
+        principal component spectrum decay constant, if ``Y`` is not a data
+        matrix, ``None`` otherwise
     rs : list-like
         true correlations for which sample sizes are estimated
     criterion : str
@@ -468,6 +513,10 @@ def cca_sample_size(
     target_error : float between 0 and 1
         if criterion is not ``'power'`` sample size is chosen to obtain at
         most ``target_error`` error in error metric(s)
+    expl_var_ratio : float
+        if ``X`` or ``Y`` is a data matrix, ``ax`` or ``ay``, respectively,
+        will be estimated directly from the data using the number of principal
+        components that explain this amount of variance
     data_home : None or str
         path where outcome data are stored, ``None`` indicates default path
 
@@ -478,6 +527,7 @@ def cca_sample_size(
     """
 
     px, py = _check_pxy(X, Y)
+    ax, ay = _check_axy(X, Y, ax, ay, expl_var_ratio=expl_var_ratio)
 
     if algorithm == 'linear_model':
 
@@ -485,8 +535,10 @@ def cca_sample_size(
                                         target_power, data_home)
 
         suggested_sample_sizes = {
-            r: int(np.exp(intercept - np.log(r) * coefs[0]
-                          + np.log(px + py) * coefs[1]))
+            r: int(np.exp(
+                intercept - np.log(r) * coefs[0] + np.log(px + py) * coefs[1]
+                + np.abs(ax + ay) * coefs[2]
+            ))
             for r in rs
         }
 
@@ -593,12 +645,13 @@ def pls_sample_size(
 
 
 def cca_req_corr(
-        X, Y,
+        X, Y, ax, ay,
         n_req,
         criterion='combined',
         algorithm='linear_model',
         target_power=0.9,
         target_error=0.1,
+        expl_var_ratio=0.3,
         data_home=None,
 ):
     """Determines the minimum required true correlation to achieve power and
@@ -612,6 +665,12 @@ def cca_req_corr(
     Y : np.ndarray (n_samples, n_Y_features) or int >= 2
         either a data matrix or directly the number of features for data matrix
         :math:`Y`
+    ax : float < 0 or None
+        principal component spectrum decay constant, if ``X`` is not a data
+        matrix, ``None`` otherwise
+    ay : float < 0 or None
+        principal component spectrum decay constant, if ``Y`` is not a data
+        matrix, ``None`` otherwise
     n_req : sample_size
         available sample size
     criterion : str
@@ -636,6 +695,10 @@ def cca_req_corr(
     target_error : float between 0 and 1
         if criterion is not ``'power'`` sample size is chosen to obtain at
         most ``target_error`` error in error metric(s)
+    expl_var_ratio : float
+        if ``X`` or ``Y`` is a data matrix, ``ax`` or ``ay``, respectively,
+        will be estimated directly from the data using the number of principal
+        components that explain this amount of variance
     data_home : None or str
         path where outcome data are stored, ``None`` indicates default path
 
@@ -646,6 +709,7 @@ def cca_req_corr(
     """
 
     px, py = _check_pxy(X, Y)
+    ax, ay = _check_axy(X, Y, ax, ay, expl_var_ratio=expl_var_ratio)
 
     if algorithm == 'linear_model':
 
@@ -653,7 +717,8 @@ def cca_req_corr(
                                         target_power, data_home)
 
         req_corr = np.exp((- np.log(n_req) + intercept
-                           + np.log(px + py) * coefs[1]) / coefs[0])
+                           + np.log(px + py) * coefs[1]
+                           + np.abs(ax + ay) * coefs[2]) / coefs[0])
         if req_corr >= 1:
             req_corr = 1
 

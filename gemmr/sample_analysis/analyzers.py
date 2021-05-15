@@ -2,6 +2,7 @@
 
 import numbers
 import warnings
+from datetime import datetime
 
 import numpy as np
 import xarray as xr
@@ -14,7 +15,7 @@ from tqdm.autonotebook import tqdm
 
 from joblib import Parallel, delayed
 
-from ..generative_model import setup_model, generate_data
+from ..generative_model import GEMMR, generate_data
 from ..util import align_weights
 from ..estimators import SVDPLS, SVDCCA
 from ..estimators.helpers import _calc_cov, _calc_corr
@@ -27,7 +28,7 @@ except ImportError:
 
 __all__ = [
     'analyze_dataset', 'analyze_resampled', 'analyze_subsampled',
-    'analyze_model', 'analyze_model_parameters',
+    'analyze_model_light', 'analyze_model_parameters', 'analyze_model'
 ]
 
 
@@ -40,7 +41,7 @@ warnings.simplefilter('always', JointCovarianceWarning)
 
 def analyze_dataset(estr, X, Y, Xorig=None, Yorig=None,
                     x_align_ref=None, y_align_ref=None,
-                    addons=tuple(), **kwargs
+                    addons=tuple(), fit_params=None, **kwargs
                     ):
     """Analyze a given dataset with a given estimator
 
@@ -89,6 +90,8 @@ def analyze_dataset(estr, X, Y, Xorig=None, Yorig=None,
         and are expected to save their respective outcome features ``results``.
         Various such functions are provided in module
         :mod:`sample_analysis_addons`
+    fit_params : dict
+        keyword-arguments for estr.fit
 
     kwargs : dict
         forwarded to additional analysis functions
@@ -104,6 +107,9 @@ def analyze_dataset(estr, X, Y, Xorig=None, Yorig=None,
     if Yorig is None:
         Yorig = Y
 
+    if fit_params is None:
+        fit_params = dict()
+
     px = X.shape[1]
     py = Y.shape[1]
 
@@ -112,7 +118,7 @@ def analyze_dataset(estr, X, Y, Xorig=None, Yorig=None,
     # assert(x_covs.shape == (px, px))
 
     try:
-        estr.fit(X, Y)
+        estr.fit(X, Y, **fit_params)
 
     except ValueError as e:
         warnings.warn('Fitting error: {}'.format(e))
@@ -190,7 +196,7 @@ def analyze_dataset(estr, X, Y, Xorig=None, Yorig=None,
 
     for ana_fun in addons:
         ana_fun(estr, X, Y, Xorig, Yorig, x_align_ref, y_align_ref, results,
-                **kwargs)
+                fit_params=fit_params, **kwargs)
 
     return results
 
@@ -234,6 +240,7 @@ def analyze_resampled(estr, X, Y, Xorig=None, Yorig=None,
                       saved_perm_features='all',
                       show_progress=True,
                       n_jobs=1,
+                      fit_params=None,
                       **kwargs):
     """Analyze a given dataset and resampled versions of it with a given
     estimator.
@@ -304,6 +311,8 @@ def analyze_resampled(estr, X, Y, Xorig=None, Yorig=None,
         whether to show progress bar
     n_jobs : int or None
         number of parallel jobs (see :class:`joblib.Parallel`)
+    fit_params : dict
+        keyword-arguments for estr.fit
     kwargs : dict
         forwarded to additional analysis functions
 
@@ -325,7 +334,7 @@ def analyze_resampled(estr, X, Y, Xorig=None, Yorig=None,
         Yorig = Y
 
     results = analyze_dataset(estr, X, Y, Xorig, Yorig, x_align_ref,
-                              y_align_ref, addons, **kwargs)
+                              y_align_ref, addons, fit_params, **kwargs)
 
     rng = check_random_state(random_state)
 
@@ -356,7 +365,7 @@ def analyze_resampled(estr, X, Y, Xorig=None, Yorig=None,
                     estr,
                     X[bs_inds], Y[bs_inds], Xorig[bs_inds], Yorig[bs_inds],
                     x_align_ref=x_align_ref_, y_align_ref=y_align_ref_,
-                    addons=addons, **kwargs
+                    addons=addons, fit_params=fit_params, **kwargs
                 )
             )
 
@@ -387,7 +396,7 @@ def analyze_resampled(estr, X, Y, Xorig=None, Yorig=None,
                     estr, X[loo_inds], Y[loo_inds],
                     Xorig[loo_inds], Yorig[loo_inds],
                     x_align_ref=x_align_ref_, y_align_ref=y_align_ref_,
-                    addons=addons, **kwargs
+                    addons=addons, fit_params=fit_params, **kwargs
                 )
             )
 
@@ -413,7 +422,7 @@ def analyze_resampled(estr, X, Y, Xorig=None, Yorig=None,
                 # x_align_ref=None, y_align_ref=None,
                 x_align_ref=x_align_ref,
                 y_align_ref=y_align_ref,
-                addons=addons, **kwargs
+                addons=addons, fit_params=fit_params, **kwargs
             )
         results_perm = parallel(
             delayed(_ana_ds_perm)(perm_inds)
@@ -439,7 +448,8 @@ def _naive_permutations(Y, rng, n):
 def analyze_subsampled(estr, X, Y, Xorig=None, Yorig=None, x_align_ref=None,
                        y_align_ref=None, addons=tuple(), ns=tuple(), n_rep=10,
                        n_perm=100, n_test=0, postprocessors=tuple(), n_jobs=1,
-                       show_progress=True, random_state=None, **kwargs):
+                       show_progress=True, random_state=None, fit_params=None,
+                       **kwargs):
     """Analyze subsampled versions of a dataset with a given estimator.
 
     Parameters
@@ -491,9 +501,10 @@ def analyze_subsampled(estr, X, Y, Xorig=None, Yorig=None, x_align_ref=None,
     n_perm : int
         each subsample is permuted ``n_perm`` times to generate a
         null-distribution of outcome quantities
-    n_test : int
+    n_test : int or 'auto'
         number of subjects to use as test set. ``max(ns) + n_test`` must be <=
-        ``n_samples``
+        ``n_samples``. If ``n_test == 'auto'`` then
+        ``n_test = n_samples - max(ns)`` will be used.
     postprocessors : list-like of functions
         functions are called after the final dataset has been concatenated and
         take that xr.Dataset as only argument
@@ -503,6 +514,8 @@ def analyze_subsampled(estr, X, Y, Xorig=None, Yorig=None, x_align_ref=None,
         whether to show progress bar
     random_state : ``None``, int or random number generator instance
         used to generate random numbers
+    fit_params : dict
+        keyword-arguments for estr.fit
     kwargs : dict
         forwarded to additional analysis functions
 
@@ -522,6 +535,14 @@ def analyze_subsampled(estr, X, Y, Xorig=None, Yorig=None, x_align_ref=None,
     if not (np.asarray(ns) < n_subjects).all():
         raise ValueError('All subsample sizes must be smaller than total '
                          'number of available samples ({})'.format(n_subjects))
+
+    if n_test == 'auto':
+        n_test = n_subjects - max(ns)
+    elif isinstance(n_test, numbers.Integral):
+        pass  # use n_test as is
+    else:
+        raise ValueError(f'Invalid n_test: {n_test}')
+
     if max(ns) + n_test > n_subjects:
         raise ValueError('max(ns) + n_test must be <= n_samples')
 
@@ -551,7 +572,7 @@ def analyze_subsampled(estr, X, Y, Xorig=None, Yorig=None, x_align_ref=None,
                     x_align_ref=x_align_ref, y_align_ref=y_align_ref,
                     perm=n_perm, random_state=rng,
                     addons=addons, n_jobs=n_jobs,
-                    Xtest=Xtest, Ytest=Ytest, **kwargs
+                    Xtest=Xtest, Ytest=Ytest, fit_params=fit_params, **kwargs
                 )
             )
 
@@ -567,11 +588,11 @@ def analyze_subsampled(estr, X, Y, Xorig=None, Yorig=None, x_align_ref=None,
     return results_n
 
 
-def analyze_model(estr, Sigma, px, ns, x_align_ref=None, y_align_ref=None,
-                  addons=tuple(), n_rep=10, n_perm=100, random_state=None,
-                  **kwargs):
+def analyze_model_light(estr, Sigma, px, ns, x_align_ref=None,
+                        y_align_ref=None, addons=tuple(), n_rep=10, n_perm=100,
+                        random_state=None, fit_params=None, **kwargs):
     """Synthetic datasets drawn from a model are analyzed with a given
-    stimator.
+    estimator.
 
     The model is specified by the covariance matrix ``Sigma``. Synthetic
     datasets are drawn from the corresponding normal distribution and analyzed.
@@ -618,6 +639,8 @@ def analyze_model(estr, Sigma, px, ns, x_align_ref=None, y_align_ref=None,
         null-distribution of outcome quantities
     random_state : ``None``, int or random number generator instance
         used to generate random numbers
+    fit_params : dict
+        keyword-arguments for estr.fit
     kwargs : dict
         forwarded to additional analysis functions
 
@@ -645,7 +668,7 @@ def analyze_model(estr, Sigma, px, ns, x_align_ref=None, y_align_ref=None,
                     estr, X, Y,
                     x_align_ref=x_align_ref, y_align_ref=y_align_ref,
                     perm=n_perm, random_state=rng,
-                    addons=addons, **kwargs
+                    addons=addons, fit_params=fit_params, **kwargs
                 )
             )
 
@@ -657,28 +680,36 @@ def analyze_model(estr, Sigma, px, ns, x_align_ref=None, y_align_ref=None,
     return results_n
 
 
-def _sample_within_variance_powerlaw(n_Sigmas, rng, axPlusay_range=(-3, 0)):
-    if len(axPlusay_range) != 2:
-        raise ValueError('Invalid axPlusay_range')
-    elif axPlusay_range[0] > axPlusay_range[1]:
-        raise ValueError('axPlusay_range must be tuple with increasing values')
-    for _ in range(n_Sigmas):
-        axPlusay = rng.uniform(*axPlusay_range)
-        ax = rng.uniform(0, 1) * axPlusay
-        ay = axPlusay - ax
-        yield ax, ay
+def _check_powerlaw_decay(n_Sigmas, rng, powerlaw_decay=(-1, -1)):
+    if len(powerlaw_decay) == 2:
+        for _ in range(n_Sigmas):
+            yield powerlaw_decay[0], powerlaw_decay[1]
+    elif (len(powerlaw_decay) == 3) and (powerlaw_decay[0] == 'random_sum'):
+        if powerlaw_decay[1] > powerlaw_decay[2]:
+            raise ValueError(
+                'When ``powerlaw_decay[0] == "random_sum"`` then '
+                '``powerlaw_decay[1]`` must be <= ``powerlaw_decay[2]``. '
+                'Got: {}'.format(powerlaw_decay))
+        for _ in range(n_Sigmas):
+            _random_sum = rng.uniform(*powerlaw_decay[1:3])
+            ax = rng.uniform(0, 1) * _random_sum
+            ay = _random_sum - ax
+            yield ax, ay
+    else:
+        raise ValueError('Invalid powerlaw_decay specification')
 
 
 def analyze_model_parameters(model, estr=None, n_rep=100, n_bs=0, n_perm=0,
                              n_per_ftrs=(2, 10, 50), pxs=(4, 8, 16, 32, 64),
                              pys='px', rs=(.1, .3, .5, .7, .9),
                              n_between_modes=1, n_Sigmas=1,
-                             axPlusay_range=(-2, 0), rotate_XY=False,
+                             powerlaw_decay=(-1, -1), rotate_XY=False,
                              qx=.9, qy=.9, expl_var_ratio_thr=1./2,
                              max_n_sigma_trials=10000, addons=tuple(),
                              n_test=0, mk_test_statistics=None,
-                             postprocessors=tuple(), verbose=False,
-                             random_state=0, show_progress=True, **kwargs):
+                             postprocessors=tuple(), comparison_gms=tuple(),
+                             verbose=False, random_state=0, show_progress=True,
+                             fit_params=None, **kwargs):
     """Parameter-dependent models are set up and resulting synthetic datasets
     are analyzed.
 
@@ -724,13 +755,21 @@ def analyze_model_parameters(model, estr=None, n_rep=100, n_bs=0, n_perm=0,
     n_Sigmas : int
         number of covariance matrices generated for each `px` and `r`. Given
         `px` and `r` covariance matrices differ by their within-set principal
-        component spectra (specified by parameter ``axPlusay_range`` and the
+        component spectra (specified by parameter ``powerlaw_decay`` and the
         directions of the between-set mode (i.e. CCA  / PLS weight) vectors
         relative to the principal component axes
-    axPlusay_range : tuple of floats <= 0
+    powerlaw_decay : tuple of floats <= 0
         separately for `X` and `Y` the within-set principal component spectrum
-        is assumed to follow a power-law with exponent drawn from a uniform
-        distribution with bounds given by ``axPlusay_range``
+        is assumed to follow a power-law. ``powerlaw_decay`` can either be a
+        tuple of 2 floats <= 0, in which case the 2 numbers represent the
+        decay constants for `X` and `Y`, respectively. Alternatively,
+        ``powerlaw_decay`` can be a tuple comprising the string `random_sum`
+        and 2 floats <= 0, in which case the value for the **sum** of the
+        decay constants for `X` and `Y` is drawn from a uniform distribution
+        with boundaries given by the 2 floats; the decay constant for `X` is
+        then a random fraction (uniform between 0 and 1) of the sum, and the
+        decay constant for `Y` is such that the 2 decay constants sum up to the
+        value for the sum
     rotate_XY : bool
         if ``True`` a random rotation is applied to each generated dataset, the
         same rotation is applied to datasets drawn from the same model (i.e.
@@ -784,12 +823,27 @@ def analyze_model_parameters(model, estr=None, n_rep=100, n_bs=0, n_perm=0,
     postprocessors : list-like of functions
         functions are called after the final dataset has been concatenated and
         take that xr.Dataset as only argument
+    comparison_gms : list-like of tuples (label, functions)
+        labels identify the alternative generative models, functions return an
+        object that encodes the alternative generative models, based on a given
+        one. Functions take a GEMMR instance as only positional argument and
+        ``m`` (number of between-set modes) and ``random_state`` (a random
+        number generator instance) as keyword arguments, and return an
+        instance of an object that has essentially the same attributes as gm
+        (cf source of :func:`analyze_model` to see which are used). The
+        dimensionalities of the the `X` and `Y` latent spaces must be
+        identical to those of the GEMMR instance. Every generated dataset will
+        then additionally be analyzed here with the estimator ``estr`` and
+        with respect to the ground truth latent axes ``U_latent_`` and
+        ``V_latent_`` encoded in these returned objects.
     verbose : bool
         whether some status messages are printed
     random_state : ``None``, int or random number generator instance
         used to generate random numbers    additional_analyses
     show_progress : bool
         if ``True`` progress bars are shown, if ``False`` not
+    fit_params : dict
+        keyword-arguments for estr.fit
     kwargs : dict
         forwarded to additional analysis functions
 
@@ -798,6 +852,10 @@ def analyze_model_parameters(model, estr=None, n_rep=100, n_bs=0, n_perm=0,
     results : xr.Dataset
         containing data variables for outcome features generated by analyses
     """
+
+    if 'axPlusay_range' in kwargs:
+        raise ValueError("kwarg axPlusay_range is deprecated, use "
+                         "powerlaw_decay")
 
     _tqdm = _prep_progressbar(show_progress)
 
@@ -817,138 +875,34 @@ def analyze_model_parameters(model, estr=None, n_rep=100, n_bs=0, n_perm=0,
 
             sigma_results = []
             for sigmai, (ax, ay) in _tqdm(enumerate(
-                    _sample_within_variance_powerlaw(n_Sigmas, rng,
-                                                     axPlusay_range)
+                    _check_powerlaw_decay(n_Sigmas, rng, powerlaw_decay)
             ), total=n_Sigmas, leave=False, desc='Sigma'):
                 try:
-                    Sigma, Sigmaxy_svals, true_corrs, U, V, \
-                        latent_expl_var_ratios_x, latent_expl_var_ratios_y, \
-                        U_latent, V_latent, \
-                        cosine_sim_pc1_latentMode_x, \
-                        cosine_sim_pc1_latentMode_y, \
-                        latent_mode_vector_algo \
-                        = setup_model(model, rng, m=n_between_modes,
-                                      px=px, py=py, qx=qx, qy=qy,
-                                      ax=ax, ay=ay, r_between=r_between,
-                                      expl_var_ratio_thr=expl_var_ratio_thr,
-                                      max_n_sigma_trials=max_n_sigma_trials,
-                                      verbose=verbose, return_full=True)
+                    gm = GEMMR(model, rng, m=n_between_modes,
+                               px=px, py=py, qx=qx, qy=qy,
+                               ax=ax, ay=ay, r_between=r_between,
+                               expl_var_ratio_thr=expl_var_ratio_thr,
+                               max_n_sigma_trials=max_n_sigma_trials,
+                               verbose=verbose, rotate_XY=rotate_XY)
                 except ValueError as e:
                     warnings.warn("Couldn't find Sigma: {}".format(e),
                                   category=JointCovarianceWarning)
                     continue
 
-                if rotate_XY:
-                    warnings.warn('rotate_XY functionality not tested')
-                    Qx = np.linalg.qr(rng.normal(size=(px, px)))[0]
-                    Qy = np.linalg.qr(rng.normal(size=(py, py)))[0]
-                    assert np.allclose(np.dot(Qx.T, Qx), np.eye(len(Qx)))
-                    assert np.allclose(np.dot(Qy.T, Qy), np.eye(len(Qy)))
-                    Qxy = np.vstack([
-                        np.hstack([Qx, np.zeros((Qx.shape[0], Qy.shape[0]))]),
-                        np.hstack([np.zeros((Qy.shape[0], Qx.shape[0])), Qy])
-                    ])
-                    Sigma = (Qxy.T).dot(Sigma).dot(Qxy)
-                    U_latent = np.dot(Qx.T, U_latent)  # Qx.T = Qx^{-1}
-                    V_latent = np.dot(Qy.T, V_latent)  # Qy.T = Qy^{-1}
-
-                true_loadings = _calc_true_loadings(Sigma, px,
-                                                    U_latent, V_latent)
+                my_comparison_gms = [(lbl, estr,
+                                      mk_gm(gm, m=gm.m, random_state=rng))
+                                     for lbl, estr, mk_gm in comparison_gms]
 
                 n_per_ftrs = _select_n_per_ftrs(n_per_ftrs, model, ax, ay,
                                                 r_between)
-                if (n_test == 'auto') or (n_test > 0):
-                    n_max = np.max(n_per_ftrs) * (px + py)
-                    if n_test == 'auto':
-                        n_test = n_max
-                    elif n_max > n_test:
-                        warnings.warn(
-                            "It's recommended to have n_test > max n, but got "
-                            "n_test ({}) < max n ({}).".format(n_test, n_max),
-                            category=UserWarning)
 
-                Xtest, Ytest = generate_data(Sigma, px, n_test, rng)
-
-                if mk_test_statistics is None:
-                    test_statistics = dict()
-                else:
-                    test_statistics = mk_test_statistics(Xtest, Ytest,
-                                                         U_latent, V_latent)
-
-                n_results = []
-                for ni, n_per_ftr in _tqdm(
-                        enumerate(n_per_ftrs),
-                        total=len(n_per_ftrs), leave=False, desc='n_per_ftr'
-                ):
-
-                    # px + py = total number of variables in X and Y
-                    n = int((px + py) * n_per_ftr)
-
-                    rep_results = []
-                    for repi in _tqdm(range(n_rep), total=n_rep, leave=False,
-                                      desc='repetition'):
-
-                        X, Y = generate_data(Sigma, px, n, rng)
-
-                        rep_results.append(
-                            analyze_resampled(estr, X, Y, X, Y, n_bs=n_bs,
-                                              perm=n_perm, random_state=rng,
-                                              addons=addons,
-                                              x_align_ref=U_latent,
-                                              y_align_ref=V_latent,
-                                              true_loadings=true_loadings,
-                                              Xtest=Xtest, Ytest=Ytest,
-                                              test_statistics=test_statistics,
-                                              show_progress=show_progress,
-                                              **kwargs
-                                              )
-                        )
-
-                    n_results.append(
-                        xr.concat(rep_results, 'rep')
-                    )
-
-                coords_x_ftr = dict(x_feature=np.arange(len(U_latent)))
-                coords_y_ftr = dict(y_feature=np.arange(len(V_latent)))
-
-                _sigma_results = xr.concat(
-                    n_results, pd.Index(n_per_ftrs, name='n_per_ftr'))
-                _sigma_results['between_assocs_true'] = \
-                    xr.DataArray(Sigmaxy_svals, dims=('mode',))
-                _sigma_results['x_weights_true'] = \
-                    xr.DataArray(U_latent, dims=('x_feature', 'mode'),
-                                 coords=coords_x_ftr)
-                _sigma_results['y_weights_true'] = \
-                    xr.DataArray(V_latent, dims=('y_feature', 'mode'),
-                                 coords=coords_y_ftr)
-                _sigma_results['ax'] = ax
-                _sigma_results['ay'] = ay
-                _sigma_results['latent_expl_var_ratios_x'] = \
-                    xr.DataArray(latent_expl_var_ratios_x, dims=('mode',))
-                _sigma_results['latent_expl_var_ratios_y'] = \
-                    xr.DataArray(latent_expl_var_ratios_y, dims=('mode',))
-                _sigma_results['weight_selection_algorithm'] = \
-                    latent_mode_vector_algo
-
-                _sigma_results['x_loadings_true'] = \
-                    xr.DataArray(true_loadings['x_loadings_true'],
-                                 dims=('x_feature', 'mode'),
-                                 coords=coords_x_ftr)
-                _sigma_results['x_crossloadings_true'] = \
-                    xr.DataArray(true_loadings['x_crossloadings_true'],
-                                 dims=('x_feature', 'mode'),
-                                 coords=coords_x_ftr)
-                _sigma_results['y_loadings_true'] = \
-                    xr.DataArray(true_loadings['y_loadings_true'],
-                                 dims=('y_feature', 'mode'),
-                                 coords=coords_y_ftr)
-                _sigma_results['y_crossloadings_true'] = \
-                    xr.DataArray(true_loadings['y_crossloadings_true'],
-                                 dims=('y_feature', 'mode'),
-                                 coords=coords_y_ftr)
-
-                for k, v in test_statistics.items():
-                    _sigma_results[k] = v
+                _sigma_results = analyze_model(gm, estr, n_per_ftrs,
+                                               n_rep, n_perm, n_bs, n_test,
+                                               mk_test_statistics,
+                                               addons, postprocessors,
+                                               my_comparison_gms,
+                                               rng, show_progress, fit_params,
+                                               **kwargs)
 
                 sigma_results.append(
                     _sigma_results
@@ -967,12 +921,183 @@ def analyze_model_parameters(model, estr=None, n_rep=100, n_bs=0, n_perm=0,
 
     result = xr.concat(px_results, pd.Index(pxs, name='px'))
 
-    for postproc in postprocessors:
-        postproc(result)
-
     result = result.sortby(['n_per_ftr', 'px', 'r'])
 
+    # add some metadata
+    result.attrs['model'] = model
+    result.attrs['estr'] = repr(estr)
+    result.attrs['powerlaw_decay'] = powerlaw_decay
+    result.attrs['created'] = str(datetime.now())
+    from .. import __version__ as gemmr_version
+    result.attrs['gemmr_version'] = gemmr_version
+
     return result
+
+
+def analyze_model(gm, estr, n_per_ftrs=(3, 4, 8, 16, 32, 64, 128, 256, 512),
+                  n_rep=100, n_perm=0, n_bs=0, n_test=0,
+                  mk_test_statistics=None,
+                  addons=tuple(), postprocessors=tuple(),
+                  comparison_gms=tuple(), random_state=0, show_progress=True,
+                  add_metadata=False, fit_params=None, **kwargs):
+
+    _tqdm = _prep_progressbar(show_progress)
+    rng = check_random_state(random_state)
+
+    true_loadings = _calc_true_loadings(gm.Sigma_, gm.px,
+                                        gm.U_latent_, gm.V_latent_)
+    true_loadings_cmp_gms = [
+        _calc_true_loadings(cgm.Sigma_, cgm.px, cgm.U_latent_, cgm.V_latent_)
+        for _, _, cgm in comparison_gms
+    ]
+
+    if (n_test == 'auto') or (n_test > 0):
+        n_max = np.max(n_per_ftrs) * (gm.px + gm.py)
+        if n_test == 'auto':
+            n_test = n_max
+        elif n_max > n_test:
+            warnings.warn(
+                "It's recommended to have n_test > max n, but got "
+                "n_test ({}) < max n ({}).".format(n_test, n_max),
+                category=UserWarning)
+
+    Xtest, Ytest = gm.generate_data(n_test, random_state=rng)
+
+    if mk_test_statistics is None:
+        test_stats = dict()
+        test_stats_cmp_gms = [dict() for _, _, cgm in comparison_gms]
+    else:
+        test_stats = mk_test_statistics(
+            Xtest, Ytest, gm.U_latent_, gm.V_latent_)
+        test_stats_cmp_gms = [
+            mk_test_statistics(Xtest, Ytest, cgm.U_latent_, cgm.V_latent_)
+            for _, _, cgm in comparison_gms
+        ]
+
+    n_results = []
+    n_results_cmp_gms = [[] for _ in comparison_gms]
+    for ni, n_per_ftr in _tqdm(
+            enumerate(n_per_ftrs),
+            total=len(n_per_ftrs), leave=False, desc='n_per_ftr'
+    ):
+
+        # px + py = total number of variables in X and Y
+        n = int((gm.px + gm.py) * n_per_ftr)
+
+        rep_results = []
+        rep_results_cmp_gms = [[] for _ in comparison_gms]
+        for repi in _tqdm(range(n_rep), total=n_rep, leave=False,
+                          desc='repetition'):
+            X, Y = gm.generate_data(n, random_state=rng)
+
+            ds = analyze_resampled(
+                estr, X, Y, X, Y, n_bs=n_bs, perm=n_perm, random_state=rng,
+                addons=addons, x_align_ref=gm.U_latent_,
+                y_align_ref=gm.V_latent_, true_loadings=true_loadings,
+                Xtest=Xtest, Ytest=Ytest, test_statistics=test_stats,
+                show_progress=show_progress, fit_params=fit_params, **kwargs
+            )
+            rep_results.append(ds)
+
+            for ci, (cmp_gm_lbl, cmp_estr, cmp_gm) in enumerate(comparison_gms):
+
+                ds_cmp_gm = analyze_resampled(
+                    cmp_estr, X, Y, X, Y, n_bs=n_bs, perm=n_perm,
+                    random_state=rng, addons=addons,
+                    x_align_ref=cmp_gm.U_latent_, y_align_ref=cmp_gm.V_latent_,
+                    true_loadings=true_loadings_cmp_gms[ci],
+                    Xtest=Xtest, Ytest=Ytest,
+                    test_statistics=test_stats_cmp_gms[ci],
+                    show_progress=show_progress, fit_params=fit_params,
+                    **kwargs
+                )
+                rep_results_cmp_gms[ci].append(ds_cmp_gm)
+
+        n_results.append(
+            xr.concat(rep_results, 'rep')
+        )
+        for ci in range(len(comparison_gms)):
+            n_results_cmp_gms[ci].append(
+                xr.concat(rep_results_cmp_gms[ci], 'rep')
+            )
+
+    # --- add properties of gm to results ---
+    results = _combine_outcomes_and_postproc(
+        n_results, gm, n_per_ftrs, test_stats, true_loadings, postprocessors
+    )
+    results_cmp_gms = [
+        _combine_outcomes_and_postproc(
+            n_results_cmp_gms[ci], cmp_gm, n_per_ftrs, test_stats_cmp_gms[ci],
+            true_loadings_cmp_gms[ci], postprocessors
+        )
+        for ci, (cmp_gm_lbl, _, cmp_gm) in enumerate(comparison_gms)
+    ]
+
+    # --- combine all results ---
+    for ci, (cmp_gm_lbl, _, cmp_gm) in enumerate(comparison_gms):
+        for v in results_cmp_gms[ci]:
+            results[f'{cmp_gm_lbl}_{v}'] = results_cmp_gms[ci][v]
+
+    if add_metadata:
+        # add some metadata
+        result.attrs['estr'] = repr(estr)
+        result.attrs['created'] = str(datetime.now())
+        from .. import __version__ as gemmr_version
+        result.attrs['gemmr_version'] = gemmr_version
+
+    return results
+
+
+def _combine_outcomes_and_postproc(n_results, gm, n_per_ftrs, test_stats,
+                                   true_loadings, postprocessors):
+
+    coords_x_ftr = dict(x_feature=np.arange(len(gm.U_latent_)))
+    coords_y_ftr = dict(y_feature=np.arange(len(gm.V_latent_)))
+
+    results = xr.concat(n_results, pd.Index(n_per_ftrs, name='n_per_ftr'))
+
+    results['between_assocs_true'] = \
+        xr.DataArray(gm.true_assocs_, dims=('mode',))
+    results['between_corrs_true'] = \
+        xr.DataArray(gm.true_corrs_, dims=('mode',))
+
+    results['x_weights_true'] = \
+        xr.DataArray(gm.U_latent_, dims=('x_feature', 'mode'),
+                     coords=coords_x_ftr)
+    results['y_weights_true'] = \
+        xr.DataArray(gm.V_latent_, dims=('y_feature', 'mode'),
+                     coords=coords_y_ftr)
+
+    results['ax'] = gm.ax
+    results['ay'] = gm.ay
+
+    results['latent_expl_var_ratios_x'] = \
+        xr.DataArray(gm.latent_expl_var_ratios_x_, dims=('mode',))
+    results['latent_expl_var_ratios_y'] = \
+        xr.DataArray(gm.latent_expl_var_ratios_y_, dims=('mode',))
+    results['weight_selection_algorithm'] = \
+        gm.latent_mode_vector_algo_
+
+    results['x_loadings_true'] = \
+        xr.DataArray(true_loadings['x_loadings_true'],
+                     dims=('x_feature', 'mode'), coords=coords_x_ftr)
+    results['x_crossloadings_true'] = \
+        xr.DataArray(true_loadings['x_crossloadings_true'],
+                     dims=('x_feature', 'mode'), coords=coords_x_ftr)
+    results['y_loadings_true'] = \
+        xr.DataArray(true_loadings['y_loadings_true'],
+                     dims=('y_feature', 'mode'), coords=coords_y_ftr)
+    results['y_crossloadings_true'] = \
+        xr.DataArray(true_loadings['y_crossloadings_true'],
+                     dims=('y_feature', 'mode'), coords=coords_y_ftr)
+
+    for k, v in test_stats.items():
+        results[k] = v
+
+    for postproc in postprocessors:
+        postproc(results)
+
+    return results
 
 
 def _prep_progressbar(show_progress):
@@ -1071,20 +1196,16 @@ def _select_n_per_ftrs(n_per_ftrs, model, ax, ay, r_between):
 
         for _r, _n_per_ftrs in [
             # tuples (r, n_per_ftrs), values were chosen heuristically
-            (.1, (3, 4, 8, 16, 32, 64, 128, 256, 512, 1024)),
-            (.3, (3, 4, 8, 16, 32, 64, 128,)),
-            (.5, (3, 4, 8, 16, 32, 64)),
-            (.7, (3, 4, 8, 16, 32)),
-            (.8, (3, 4, 8, 16)),
-            (1., (3, 4, 8)),
+            (.1, (3, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192)),
+            (.3, (3, 4, 8, 16, 32, 64, 128, 256, 512, 1024)),
+            (.5, (3, 4, 8, 16, 32, 64, 128, 256, 512)),
+            (.7, (3, 4, 8, 16, 32, 64, 128, 256)),
+            (.8, (3, 4, 8, 16, 32, 64, 128)),
+            (1., (3, 4, 8, 16, 32, 64)),
         ]:
             if r_between <= _r:
                 n_per_ftrs = _n_per_ftrs
                 break
-
-        if model == 'pls':
-            npf_mx = n_per_ftrs[-1]
-            n_per_ftrs = np.r_[n_per_ftrs, [2*npf_mx, 4*npf_mx, 8*npf_mx]]
 
         # return in reverse order to get upper limit for time estimate from
         # tqdm

@@ -13,12 +13,12 @@ from gemmr.estimators import *
 import gemmr.generative_model
 import gemmr.sample_analysis.analyzers
 from gemmr.sample_analysis.analyzers import _calc_loadings, _calc_true_loadings, _get_py, _select_n_per_ftrs, \
-    _prep_progressbar, _check_model_and_estr, _sample_within_variance_powerlaw
+    _prep_progressbar, _check_model_and_estr, _check_powerlaw_decay
 
 
 def test_analyze_dataset():
 
-    def addon_test(estr, X, Y, Xorig, Yorig, x_align_ref, y_align_ref, results):
+    def addon_test(estr, X, Y, Xorig, Yorig, x_align_ref, y_align_ref, results, **kwargs):
         results['addon_var'] = 3./8
 
     estr = SVDPLS()
@@ -27,8 +27,8 @@ def test_analyze_dataset():
 
     result = gemmr.sample_analysis.analyze_dataset(estr, X, Y, addons=[addon_test])
 
-    assert result.between_corrs_sample == 1.
-    assert result.addon_var == 3./8
+    assert np.isclose(result.between_corrs_sample, 1.)
+    assert np.isclose(result.addon_var, 3./8)
 
     estr.fit(X, Y)
     assert np.isclose(estr.assocs_[0], result.between_assocs)
@@ -152,17 +152,17 @@ def test_analyze_subsampled(mock_analyze_resampled):
 
 
 @patch('gemmr.sample_analysis.analyzers.analyze_resampled', side_effect=mocked_analyze_resampled)
-def test_analyze_model(mock_analyze_resampled):
+def test_analyze_model_light(mock_analyze_resampled):
 
     estr = SVDPLS()
     Sigma = np.eye(4)
     px = 2
     ns = np.array([3,4])
-    assert_raises(ValueError, gemmr.sample_analysis.analyze_model, estr, Sigma, px, [], n_rep=2)
-    assert_raises(ValueError, gemmr.sample_analysis.analyze_model, estr, Sigma, px, ns, n_rep=0)
+    assert_raises(ValueError, gemmr.sample_analysis.analyze_model_light, estr, Sigma, px, [], n_rep=2)
+    assert_raises(ValueError, gemmr.sample_analysis.analyze_model_light, estr, Sigma, px, ns, n_rep=0)
 
     n_rep=5
-    result = gemmr.sample_analysis.analyze_model(estr, Sigma, px, ns, n_rep=5)
+    result = gemmr.sample_analysis.analyze_model_light(estr, Sigma, px, ns, n_rep=5)
     assert mock_analyze_resampled.call_count > 0
 
     tgt_var1 = xr.DataArray(np.arange(2), dims=('dummy',)).expand_dims(n=np.asarray(ns), rep=np.arange(n_rep))
@@ -173,41 +173,25 @@ def test_analyze_model(mock_analyze_resampled):
     assert_xr_equal(result, target_ds)
 
 
-def test__sample_within_variance_powerlaw():
+def test__check_powerlaw_decay():
     class MockRNG:
         def uniform(self, a, b):
             return 3.1
     rng = MockRNG()
-    assert_raises(ValueError, next, _sample_within_variance_powerlaw(2, rng, axPlusay_range=(1,)))
-    assert_raises(ValueError, next, _sample_within_variance_powerlaw(2, rng, axPlusay_range=(1,2,3)))
-    assert_raises(ValueError, next, _sample_within_variance_powerlaw(2, rng, axPlusay_range=(3, 1)))
+    assert_raises(ValueError, next, _check_powerlaw_decay(2, rng, powerlaw_decay=(1,)))
+    assert_raises(ValueError, next, _check_powerlaw_decay(2, rng, powerlaw_decay=(1, 2, 3)))
+    assert_raises(ValueError, next, _check_powerlaw_decay(2, rng, powerlaw_decay=('random_sum', 4, 3)))
 
-    axys = [x for x in _sample_within_variance_powerlaw(2, rng, (3,4,))]
-    print(axys)
-    assert axys == [(3.1*3.1, 3.1-3.1*3.1), (3.1*3.1, 3.1-3.1*3.1)]
+    assert next(_check_powerlaw_decay(2, rng, powerlaw_decay=(3, 1))) == (3, 1)
 
-
-mocked_setup_model = create_autospec(
-    gemmr.sample_analysis.analyzers.setup_model,
-    return_value=(
-        np.nan * np.empty((4, 4)),  # Sigma
-        None,  # Sigmaxy_svals
-        None,  # true_corrs
-        None,  # U
-        None,  # V
-        None,  # latent_expl_var_ratios_x
-        None,  # latent_expl_var_ratios_y
-        np.eye(2),  # U_latent
-        np.eye(2),  # V_latent
-        None,  # cosine_sim_pc1_latentMode_x
-        None,  # cosine_sim_pc1_latentMode_y
-        None,  # latent_mode_vector_algo
-    )
-)
+    axys = [x for x in _check_powerlaw_decay(5, rng, ('random_sum', 3, 4,))]
+    assert(len(axys) == 5)
+    axy_sums = np.array([np.sum(x) for x in axys])
+    assert np.all(axy_sums >= 3)
+    assert np.all(axy_sums <= 4)
 
 
 @patch('gemmr.sample_analysis.analyzers.analyze_resampled', side_effect=mocked_analyze_resampled)
-# @patch('gemmr.sample_analysis.analyzers.setup_model', side_effect=mocked_setup_model)
 def test_analyze_model_parameters(
         # mock_setup_model,
         mock_analyze_resampled
@@ -226,6 +210,7 @@ def test_analyze_model_parameters(
     n_per_ftrs = np.asarray((6, 7))
     n_Sigmas = 10
     n_rep = 2
+    ax, ay = -.5, -1.5
     kwargs = dict(
         model='cca',
         estr=None,
@@ -238,7 +223,7 @@ def test_analyze_model_parameters(
         rs=rs,
         n_between_modes=1,
         n_Sigmas=n_Sigmas,
-        axPlusay_range=(-2, -2),
+        powerlaw_decay=(ax, ay),
         n_test=2*7*9+1,
         mk_test_statistics=mk_test_stats,
         addons=[],  # test in analyze_dataset
@@ -250,10 +235,10 @@ def test_analyze_model_parameters(
 
     assert mock_analyze_resampled.call_count > 0
 
-    assert set(result.data_vars.keys()) == set(['var1', 'between_assocs_true', 'x_weights_true', 'y_weights_true', 'ax', 'ay', 'latent_expl_var_ratios_x', 'latent_expl_var_ratios_y', 'weight_selection_algorithm', 'x_loadings_true', 'x_crossloadings_true', 'y_loadings_true', 'y_crossloadings_true', 'py', 'test_stat1', 'postproc'])
+    assert set(result.data_vars.keys()) == set(['var1', 'between_assocs_true', 'between_corrs_true', 'x_weights_true', 'y_weights_true', 'ax', 'ay', 'latent_expl_var_ratios_x', 'latent_expl_var_ratios_y', 'weight_selection_algorithm', 'x_loadings_true', 'x_crossloadings_true', 'y_loadings_true', 'y_crossloadings_true', 'py', 'test_stat1', 'postproc'])
     assert set(result.dims) == set(['Sigma_id', 'dummy', 'mode', 'n_per_ftr', 'px', 'r', 'rep', 'x_feature', 'y_feature'])
 
-    assert result.postproc == 3.1
+    assert np.allclose(result.postproc, 3.1)
     assert_allclose(result.r.values, np.sort(rs))
     assert np.all(result.px == pxs)
     assert np.all(result.n_per_ftr == n_per_ftrs)
@@ -276,7 +261,8 @@ def test_analyze_model_parameters(
 
     assert result.ax.dims == ('px', 'r', 'Sigma_id',)
     assert result.ay.dims == ('px', 'r', 'Sigma_id',)
-    assert_allclose((result.ax+result.ay).values, -2)
+    assert_allclose(result.ax.values, ax)
+    assert_allclose(result.ay.values, ay)
 
     assert result.latent_expl_var_ratios_x.dims == ('px', 'r', 'Sigma_id', 'mode')
     assert result.latent_expl_var_ratios_y.dims == ('px', 'r', 'Sigma_id', 'mode')
@@ -330,7 +316,7 @@ def test_analyze_model_parameters_align():
         py='px',
         n_per_ftrs=[2*px+1],
         rs=(.1,),
-        axPlusay_range=(0, 0),
+        powerlaw_decay=(0, 0),
         random_state=0,
         qx=.9,
         qy=.9,
@@ -350,7 +336,7 @@ def test_analyze_model_parameters_align():
         py='px',
         n_per_ftrs=[2*px+1],
         rs=(.1,),
-        axPlusay_range=(0, 0),
+        powerlaw_decay=(0, 0),
         random_state=0,
         qx=.9,
         qy=.9,
@@ -476,18 +462,17 @@ def test__calc_true_loadings():
         ('cca', SVDCCA()),
         ('pls', SVDPLS())
     ]:
-        Sigma, Sigmaxy_svals, true_corrs, U, V, latent_expl_var_ratios_x, latent_expl_var_ratios_y, U_latent, V_latent, \
-        cosine_sim_pc1_latentMode_x, cosine_sim_pc1_latentMode_y, latent_mode_vector_algo = \
-            gemmr.generative_model.setup_model('cca', px=px, py=py, return_full=True)
+        gm = gemmr.generative_model.GEMMR(model, px=px, py=py)
 
-        X, Y = gemmr.generative_model.generate_data(Sigma, px, 100000, random_state=0)
+        X, Y = gm.generate_data(100000, random_state=0)
         estr.fit(X, Y)
         lXX = 1 - cdist(X.T, estr.x_scores_.T, metric='correlation')
         lXY = 1 - cdist(X.T, estr.y_scores_.T, metric='correlation')
         lYX = 1 - cdist(Y.T, estr.x_scores_.T, metric='correlation')
         lYY = 1 - cdist(Y.T, estr.y_scores_.T, metric='correlation')
 
-        true_loadings = _calc_true_loadings(Sigma, px, U_latent, V_latent)
+        true_loadings = _calc_true_loadings(gm.Sigma_, px,
+                                            gm.U_latent_, gm.V_latent_)
 
         decimal = 2
         assert_array_almost_equal_up_to_sign(lXX, true_loadings['x_loadings_true'], decimal=decimal)

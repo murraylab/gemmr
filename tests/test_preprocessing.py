@@ -42,7 +42,7 @@ def test_prepare_confounders():
 def test_preproc_sm():
     sm, ftr_names = _mk_sm()
     confounders = prepare_confounders(sm)
-    uu2, uu2_white, S4, feature_names = preproc_sm(confounders, sm,
+    uu2, uu2_white, S4, feature_names = preproc_sm(sm, confounders,
                feature_names=ftr_names, final_deconfound=False)
     assert set(feature_names) == set(ftr_names)
     assert np.allclose(uu2_white.var(0), 1)
@@ -83,6 +83,6 @@ def test_preproc_smith():
 
 
 def test__check_features():
-    checked_features = _check_features(feature_names=None,
+    checked_features = _check_features(feature_names=None, available_feature_names=None,
                                        hcp_data_dict_correct_pct_to_t=False)
-    assert np.all(checked_features == np.sort(_smith_feature_names))
+    assert np.all(np.sort(checked_features) == np.sort(_smith_feature_names))

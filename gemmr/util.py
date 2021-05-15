@@ -175,7 +175,7 @@ def rank_based_inverse_normal_trafo(x, c='blom'):
 
     Parameters
     ----------
-    x : np.ndarray-like (n_samples,)
+    x : np.ndarray-like (n_samples,) or (n_samples x n_features)
         data to be transformed
     c : float or str
         constant appearing in transformation, named values (cf. Beasley et al.)
@@ -187,7 +187,7 @@ def rank_based_inverse_normal_trafo(x, c='blom'):
 
     Returns
     -------
-    x_INT : (n_samples,)
+    x_INT : (n_samples,) or (n_samples x n_features)
         transformed data
     """
 
@@ -198,9 +198,27 @@ def rank_based_inverse_normal_trafo(x, c='blom'):
         waerden=0
     ).get(c, c)
 
-    ranks = np.argsort(np.argsort(np.asarray(x))) + 1
+    x = np.asarray(x)
 
-    return norm.ppf((ranks - c) / (len(ranks) - 2*c + 1))
+    is_finite = np.isfinite(x)
+    ranks = np.where(
+        is_finite,
+        np.argsort(np.argsort(x, axis=0), axis=0) + 1,
+        np.nan
+    )
+
+    z = (ranks - c) / (is_finite.sum(0) - 2*c + 1)
+    if is_finite.all():
+        x_INT = norm.ppf(z)
+    else:  # loop as workaround to suppress runtime warnings
+        x_INT = np.nan * np.empty_like(z)
+        for i in range(z.size):
+            if np.isfinite(z.flat[i]):
+                x_INT.flat[i] = norm.ppf(z.flat[i])
+
+    assert np.allclose(np.mean(np.ma.masked_invalid(x_INT), axis=0), 0)
+
+    return x_INT
 
 
 def pc_spectrum_decay_constant(X=None, pc_spectrum=None,

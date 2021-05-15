@@ -23,7 +23,8 @@ __all__ = ['calc_p_value', 'analyze_subsampled_and_resampled',
            'pairwise_weight_cosine_similarity']
 
 
-def calc_p_value(estr, X, Y, permutations=999, random_state=0):
+def calc_p_value(estr, X, Y, permutations=999, fit_params=None,
+                 random_state=0):
     """Calculate permutation-based p-value.
 
     The p-value is calculated based on the attribute "assocs_[0]" of the fitted
@@ -45,6 +46,8 @@ def calc_p_value(estr, X, Y, permutations=999, random_state=0):
         the set of values in each row must be a permutation of [0, n_samples)
         and the order of columns are assumed to correspond to the order
         of rows of X and Y)
+    fit_params : dict
+        keyword-arguments for estr.fit
     random_state : None, int or rng-instance
         random seed
 
@@ -54,9 +57,12 @@ def calc_p_value(estr, X, Y, permutations=999, random_state=0):
         the permutation-based p-value
     """
 
+    if fit_params is None:
+        fit_params = dict()
+
     rng = check_random_state(random_state)
 
-    estr.fit(X, Y)
+    estr.fit(X, Y, **fit_params)
     score = estr.assocs_[0]
 
     if isinstance(permutations, numbers.Integral):
@@ -69,16 +75,17 @@ def calc_p_value(estr, X, Y, permutations=999, random_state=0):
     perm_scores = np.nan * np.empty(n_permutations)
     for permi, permuted_indices in enumerate(perm_iter):
         Yperm = Y[permuted_indices]
-        estr.fit(X, Yperm)
+        estr.fit(X, Yperm, **fit_params)
         perm_scores[permi] = estr.assocs_[0]
 
-    return ((perm_scores > score).sum() + 1) / (n_permutations + 1)
+    return ((perm_scores >= score).sum() + 1) / (n_permutations + 1)
 
 
 def analyze_subsampled_and_resampled(
         estr, X, Y, permutations=1000, n_min_subsample=None,
         frac_max_subsample=0.8, n_subsample_ns=5, n_rep_subsample=100,
-        n_perm_subsample=1000, n_test_subsample=0, n_jobs=1, random_state=0):
+        n_perm_subsample=1000, n_test_subsample=0, n_jobs=1, fit_params=None,
+        random_state=0):
     """Analyzes the given data with the given estimator.
 
     Specifially:
@@ -113,10 +120,14 @@ def analyze_subsampled_and_resampled(
         number of times a subsampled dataset of a given size is generated
     n_perm_subsample : int
         number of permutations for each subsampled datasets
-    n_test_subsample : int
-        number of subjects to use as test set in subsampled datasets
+    n_test_subsample : int or 'auto'
+        number of subjects to use as test set in subsampled datasets. If
+        ``n_test == 'auto'`` then ``n_test = n_samples - max(ns)`` will be
+        used.
     n_jobs : int or None
         number of parallel jobs (see :class:`joblib.Parallel`)
+    fit_params : dict
+        keyword-arguments for estr.fit
     random_state : None, int or rng-instance
         random seed
 
@@ -132,13 +143,15 @@ def analyze_subsampled_and_resampled(
 
     assert len(X) == len(Y)
     assert 0 <= frac_max_subsample <= 1
-
+    if n_rep_subsample <= 1:
+        raise ValueError(f"n_rep_subsample must be >= 2, got {n_rep_subsample}")
     # p-value
-    p_value = calc_p_value(estr, X, Y, random_state=random_state,
-                           permutations=permutations)
+    p_value = calc_p_value(estr, X, Y, permutations=permutations,
+                           fit_params=fit_params, random_state=random_state)
 
     # whole sample analysis with permutations
-    ds_tmp = analyze_resampled(estr, X, Y, random_state=0, perm=0)
+    ds_tmp = analyze_resampled(estr, X, Y, random_state=0, perm=0,
+                               fit_params=fit_params)
     ds_whole_sample = analyze_resampled(
         estr,
         X, Y,
@@ -155,7 +168,8 @@ def analyze_subsampled_and_resampled(
         ],
         scorers=addon.mk_scorers_for_cv(),
         n_jobs=n_jobs,
-        random_state=random_state
+        random_state=random_state,
+        fit_params=fit_params,
     )
     ds_whole_sample.attrs['n_samples'] = len(X)
 
@@ -189,7 +203,8 @@ def analyze_subsampled_and_resampled(
             postproc.remove_test_scores,
         ],
         n_jobs=n_jobs,
-        random_state=random_state
+        random_state=random_state,
+        fit_params=fit_params,
     )
     del ds_subsampled['x_test_scores_perm']
     del ds_subsampled['y_test_scores_perm']

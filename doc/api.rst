@@ -33,6 +33,7 @@ Synthetic data generation
 .. autosummary::
    :toctree: _autosummary
 
+   generative_model.GEMMR
    generative_model.setup_model
    generative_model.generate_data
 
@@ -98,6 +99,7 @@ Finally, there are a number of analysis building blocks that we found useful:
 
     sample_analysis.macros.calc_p_value
     sample_analysis.macros.analyze_subsampled_and_resampled
+    sample_analysis.macros.pairwise_weight_cosine_similarity
 
 Model selection
 ---------------

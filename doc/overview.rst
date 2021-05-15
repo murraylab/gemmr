@@ -134,4 +134,3 @@ The main parameters of interest on which CCA / PLS results depend and which are 
 For more information, see :ref:`how_it_works`, :ref:`analyses_from_paper`, as well as the [gemmr]_ publication.
 
 .. [gemmr] Helmer et al., On stability of Canonical Correlation Analysis and Partial Least Squares with application to brain-behavior associations, bioRxiv, 2020. DOI: 10.1101/2020.08.25.265546. https://www.biorxiv.org/content/10.1101/2020.08.25.265546v1
-

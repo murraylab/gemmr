@@ -5,7 +5,7 @@ import xarray as xr
 from scipy.interpolate import InterpolatedUnivariateSpline
 
 from ..metrics import mk_betweenAssocRelError, mk_weightError, \
-    mk_scoreError, mk_loadingError
+    mk_scoreError, mk_loadingError, mk_betweenCorrRelError
 
 
 __all__ = ['calc_n_required', 'calc_max_n_required',
@@ -105,9 +105,12 @@ def calc_max_n_required(*n_requireds):
     """
     if len(n_requireds) == 0:
         raise ValueError('Need at least 1 argument')
+    #for xi, x in enumerate(n_requireds):
+    #    if np.isnan(x.sel(r=0.9, px=64)).any():
+    #        print(xi, x.sel(r=0.9, px=64))
     max_n_required = n_requireds[0]
     for other_n_required in n_requireds[1:]:
-        max_n_required = np.fmax(
+        max_n_required = np.maximum(
             max_n_required,
             other_n_required
         )
@@ -254,7 +257,7 @@ def calc_n_required(metric, y_target_min, y_target_max,
 
 
 def calc_n_required_all_metrics(ds, target_power=0.9, target_error=0.1,
-                                search_dim='n'):
+                                search_dim='n', prefix='', average_rep=True):
     """Calculate n_required for 5 commonly used metrics, as well as maximum
     across metrics.
 
@@ -274,6 +277,10 @@ def calc_n_required_all_metrics(ds, target_power=0.9, target_error=0.1,
         minimum acceptable power
     target_error : float between 0 and 1
         maximum accepted error
+    average_rep : bool
+        if ``True`` calculated values of metrics are averaged across dimension
+        ``'rep'`` before calculating required sample size (doesn't apply to
+        metric `power`)
 
     Returns
     -------
@@ -285,15 +292,17 @@ def calc_n_required_all_metrics(ds, target_power=0.9, target_error=0.1,
         raise ValueError("search_dim ('{}') is not a dimension "
                          "of ds".format(search_dim))
 
-    power_n_required = _calc_n_req_for_power(ds, target_power, search_dim)
+    power_n_required = _calc_n_req_for_power(ds, target_power, search_dim,
+                                             prefix)
     betweenAssocRelError_n_required = _calc_n_req_for_metric(
-        mk_betweenAssocRelError, ds, target_error, search_dim)
+        mk_betweenAssocRelError, ds, target_error, search_dim, prefix,
+        average_rep)
     weightError_n_required = _calc_n_req_for_metric(
-        mk_weightError, ds, target_error, search_dim)
+        mk_weightError, ds, target_error, search_dim, prefix, average_rep)
     scoreError_n_required = _calc_n_req_for_metric(
-        mk_scoreError, ds, target_error, search_dim)
+        mk_scoreError, ds, target_error, search_dim, prefix, average_rep)
     loadingError_n_required = _calc_n_req_for_metric(
-        mk_loadingError, ds, target_error, search_dim)
+        mk_loadingError, ds, target_error, search_dim, prefix, average_rep)
     max_log_n_required = calc_max_n_required(
         power_n_required,
         betweenAssocRelError_n_required,
@@ -311,15 +320,17 @@ def calc_n_required_all_metrics(ds, target_power=0.9, target_error=0.1,
     )
 
 
-def _calc_n_req_for_metric(metric, ds, target_error, search_dim):
+def _calc_n_req_for_metric(metric, ds, target_error, search_dim, prefix='',
+                           average_rep=True):
+    _metric = metric(ds, prefix=prefix)
+    if average_rep:
+        _metric = _metric.mean('rep')
     n_required = calc_n_required(
-        metric(ds).mean('rep'),
-        -target_error, target_error, search_dim=search_dim)
+        _metric, -target_error, target_error, search_dim=search_dim)
     return n_required
 
 
-def _calc_n_req_for_power(ds, target_power, search_dim):
+def _calc_n_req_for_power(ds, target_power, search_dim, prefix=''):
     power_n_required = calc_n_required(
-        ds.power,
-        target_power, 1, search_dim=search_dim)
+        ds[f'{prefix}power'], target_power, 1, search_dim=search_dim)
     return power_n_required

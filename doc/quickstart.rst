@@ -17,16 +17,16 @@ Simply import ``gemmr``
 
     from gemmr import *
 
-Then, for CCA, only the number of features in each of the 2 datasets needs to be specified, e.g.
+Then, for CCA, only the number of features in each of the 2 datasets, as well as the powerlaw decay constant for the
+within-set principal component spectrum, need to be specified, e.g.
 
 .. ipython:: python
     :okwarning:
 
-    cca_sample_size(100, 50)
+    cca_sample_size(100, 50, -.8, -1.2)
 
 The result is a dictionary with keys indicating assumed ground truth correlations and values giving the corresponding
-sample size estimate. For PLS, in addition to the number of features in each dataset the powerlaw decay constant for the
-within-set principal component spectrum needs to be specified:
+sample size estimate. For PLS, sample size can be calculated similarly:
 
 .. ipython:: python
     :okwarning:
@@ -48,7 +48,7 @@ The functionality is provided in module :mod:`generative_model` and requires two
 
 .. ipython:: python
 
-    from gemmr.generative_model import setup_model, generate_data
+    from gemmr.generative_model import GEMMR
 
 
 First, a model needs to be specified. The required parameters are:
@@ -62,15 +62,15 @@ First, a model needs to be specified. The required parameters are:
     px, py = 3, 5
     r_between = 0.3
     ax, ay = -1, -.5
-    Sigma = setup_model('cca', px=px, py=py, ax=ax, ay=ay, r_between=r_between)
+    gm = GEMMR('cca', px=px, py=py, ax=ax, ay=ay, r_between=r_between)
 
 Analogously, if a model for PLS is desired the first argument becomes ``'pls'``.
 
-Second, given the model, data can be drawn from the normal distribution associated with the covariance matrix ``Sigma``:
+Second, data can be drawn from the model distribution:
 
 .. ipython:: python
 
-    X, Y = generate_data(Sigma, px, n=5000)
+    X, Y = gm.generate_data(n=5000)
     X.shape, Y.shape
 
 See the API reference for :func:`.generative_model.setup_model` and :func:`.generative_model.generate_data` for more details.
