@@ -298,7 +298,7 @@ def pc_spectrum_decay_constant(X=None, pc_spectrum=None,
         y = pc_spectrum_nrm[:nc]
 
         lm = LinearRegression(
-            fit_intercept=True, normalize=False
+            fit_intercept=True
         ).fit(
             np.log(X).reshape(-1, 1),
             np.log(y)
