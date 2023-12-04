@@ -3,6 +3,7 @@
 [![Documentation Status](https://readthedocs.org/projects/gemmr/badge/?version=latest)](https://gemmr.readthedocs.io/en/latest/?badge=latest)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/gemmr)
 ![PyPI](https://img.shields.io/pypi/v/gemmr)
+[![DOI](https://zenodo.org/badge/282479318.svg)](https://zenodo.org/doi/10.5281/zenodo.10253488)
 
 gemmr - Generative Modeling of Multivariate Relationships
 =========================================================
