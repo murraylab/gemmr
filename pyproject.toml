@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gemmr"
+version = "0.4.0"
+authors = [
+  { name="Markus Helmer" },
+]
+description = "Generative Modeling of Multivariate Relationships"
+license = { text = 'GPLv3' }
+readme = { file = "README.md", content-type = "text/markdown"}
+requires-python = ">=3.7"
+classifiers = [
+    'Programming Language :: Python :: 3',
+    'License :: OSI Approved :: GNU General Public License v3 (GPLv3)',
+    'Topic :: Scientific/Engineering',
+    'Intended Audience :: Science/Research',
+]
+dependencies = [
+    'numpy',
+    'scipy',
+    'pandas',
+    'xarray',
+    'netcdf4',
+    'scikit-learn',
+    'statsmodels',
+    'joblib',
+    'tqdm',
+]
+
+[project.urls]
+Homepage = "https://github.com/murraylab/gemmr"
+Documentation = "https://gemmr.readthedocs.io/en/latest/"
+Repository = "https://github.com/murraylab/gemmr"
