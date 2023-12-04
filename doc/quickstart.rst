@@ -62,7 +62,7 @@ First, a model needs to be specified. The required parameters are:
     px, py = 3, 5
     r_between = 0.3
     ax, ay = -1, -.5
-    gm = GEMMR('cca', px=px, py=py, ax=ax, ay=ay, r_between=r_between)
+    gm = GEMMR('cca', wx=px, wy=py, ax=ax, ay=ay, r_between=r_between)
 
 Analogously, if a model for PLS is desired the first argument becomes ``'pls'``.
 

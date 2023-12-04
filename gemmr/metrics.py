@@ -33,7 +33,7 @@ def mk_fnr(ds, prefix=''):
     return 1 - ds[f'{prefix}power']
 
 
-def mk_betweenAssocRelError(ds, prefix=''):
+def mk_betweenAssocRelError(ds, prefix='', datavar='between_assocs'):
     """Evaluate the relative error of the between-set association strength.
 
     Parameters
@@ -50,7 +50,7 @@ def mk_betweenAssocRelError(ds, prefix=''):
         evaluated metric
     """
     return \
-        ds[f'{prefix}between_assocs'] / ds[f'{prefix}between_assocs_true'] - 1
+        ds[f'{prefix}{datavar}'] / ds[f'{prefix}between_assocs_true'] - 1
 
 
 def mk_absBetweenAssocRelError(ds, prefix=''):
@@ -114,7 +114,7 @@ def mk_meanBetweenAssocRelError(ds, cv_assoc):
     return assoc / ds.between_assocs_true - 1
 
 
-def mk_betweenCorrRelError(ds, prefix=''):
+def mk_betweenCorrRelError(ds, prefix='', datavar='between_corrs_sample'):
     """Evaluate the relative error of the between-set correlations.
 
     Technical note: sample correlation strengths are taken from dataset
@@ -134,7 +134,7 @@ def mk_betweenCorrRelError(ds, prefix=''):
     metric : xr.DataArray
         evaluated metric
     """
-    return ds[f'{prefix}between_corrs_sample'] / \
+    return ds[f'{prefix}{datavar}'] / \
            ds[f'{prefix}between_corrs_true'] - 1
 
 
@@ -212,8 +212,8 @@ def mk_scoreError(ds, prefix=''):
         evaluated metric
     """
     return np.maximum(
-        1 - np.abs(ds[f'{prefix}x_test_scores_true_spearman']),
-        1 - np.abs(ds[f'{prefix}y_test_scores_true_spearman'])
+        1 - np.abs(ds[f'{prefix}x_test_scores_true_pearson']),
+        1 - np.abs(ds[f'{prefix}y_test_scores_true_pearson'])
     )
 
 

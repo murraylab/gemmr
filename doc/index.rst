@@ -32,7 +32,7 @@ See also
 
 - source code repository on `github`_
 
-.. _github: https://github.com/mdhelmer/gemmr
+.. _github: https://github.com/murraylab/gemmr
 
 .. toctree::
    :maxdepth: 1

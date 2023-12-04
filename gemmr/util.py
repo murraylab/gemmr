@@ -1,7 +1,10 @@
 """Utility functions used throughout the rest of the package."""
 
+import warnings
+
 import numpy as np
 import pandas as pd
+import xarray as xr
 from scipy.spatial.distance import cdist
 from scipy.stats import norm
 from sklearn.linear_model import LinearRegression
@@ -13,7 +16,9 @@ except ModuleNotFoundError:
 
 __all__ = ['_check_float', 'check_positive_definite',
            'align_weights', 'nPerFtr2n',
-           'rank_based_inverse_normal_trafo', 'pc_spectrum_decay_constant']
+           'rank_based_inverse_normal_trafo', 'pc_spectrum_decay_constant',
+           'subset_ds'
+           ]
 
 
 def _check_float(v, label, lo, up, boundaries):
@@ -102,9 +107,11 @@ def align_weights(v, vtrue, copy=True, return_sign=False):
     # vshape = v.shape
     v = v.reshape(-1, len(vtrue))
     sims = 1 - cdist(v, vtrue.reshape(1, -1), metric='cosine')
-    signs = np.sign(sims)
+    # NOTE: np.sign could return 0 which would be bad downstream, therefore:
+    signs = 2 * (sims >= 0).astype(float) - 1
+    assert np.isin(signs, [-1, 1]).all()
     v *= signs
-    assert np.all(1 - cdist(v, vtrue.reshape(1, -1), metric='cosine') > 0)
+    assert np.all(1 - cdist(v, vtrue.reshape(1, -1), metric='cosine') >= 0)
 
     if not return_sign:
         return v
@@ -157,6 +164,7 @@ def nPerFtr2n(nPerFtr, py=None):
         names=['ptot', 'r', 'Sigma_id']
     )
 
+    n = n.drop_vars({'px', 'all_dims', 'r', 'Sigma_id'})
     n.coords['all_dims'] = new_index
     n = n.unstack('all_dims')
 
@@ -298,7 +306,7 @@ def pc_spectrum_decay_constant(X=None, pc_spectrum=None,
         y = pc_spectrum_nrm[:nc]
 
         lm = LinearRegression(
-            fit_intercept=True, normalize=False
+            fit_intercept=True,
         ).fit(
             np.log(X).reshape(-1, 1),
             np.log(y)
@@ -329,3 +337,74 @@ def pc_spectrum_decay_constant(X=None, pc_spectrum=None,
             logx=True, logy=True
         )
         return powerlaw_decay_constants, panel
+
+
+def _check_gm_or_Sxx(gm_or_Sxx, Syy, Sxy):
+    if (Syy is None) and (Sxy is None):
+        # assume gm_or_Sxx is gm
+        gm = gm_or_Sxx
+        Sxx = gm.Sigmaxx_
+        Syy = gm.Sigmayy_
+        Sxy = gm.Sigmaxy_
+    elif (Syy is None) or (Sxy is None):
+        raise ValueError('Either all or none of Syy, Sxy must be given')
+    else:
+        # assume gm_or_Sxx is Sxx
+        Sxx = gm_or_Sxx
+        assert Sxx.shape[0] == Sxx.shape[1] == Sxy.shape[0]
+        assert Sxy.shape[1] == Syy.shape[0] == Syy.shape[1]
+    return Sxx, Syy, Sxy
+
+
+def _calc_true_loadings(Sigma, px, wX_true, wY_true):
+
+    if (wX_true.shape[1] > 1) or (wY_true.shape[1] > 1):
+        warnings.warn('More than 1 mode not tested')
+
+    invsqrt_std_X = np.diag(1. / np.sqrt(np.diag(Sigma[:px, :px])))
+    invsqrt_std_Y = np.diag(1. / np.sqrt(np.diag(Sigma[px:, px:])))
+
+    SigmaXX = Sigma[:px, :px]
+    SigmaXY = Sigma[:px, px:]
+    SigmaYX = Sigma[px:, :px]
+    SigmaYY = Sigma[px:, px:]
+
+    x_scores_std = np.array([
+        np.sqrt((wX_true[:, i].T).dot(SigmaXX).dot(wX_true[:, i]))
+        for i in range(wX_true.shape[1])]).reshape(1, -1)
+    y_scores_std = np.array([
+        np.sqrt((wY_true[:, i].T).dot(SigmaYY).dot(wY_true[:, i]))
+        for i in range(wY_true.shape[1])]).reshape(1, -1)
+
+    x_loadings_true = invsqrt_std_X.dot(SigmaXX).dot(wX_true / x_scores_std)
+    x_crossloadings_true = \
+        invsqrt_std_X.dot(SigmaXY).dot(wY_true / y_scores_std)
+    y_loadings_true = invsqrt_std_Y.dot(SigmaYY).dot(wY_true / y_scores_std)
+    y_crossloadings_true = \
+        invsqrt_std_Y.dot(SigmaYX).dot(wX_true / x_scores_std)
+
+    return dict(
+        x_loadings_true=x_loadings_true,
+        x_crossloadings_true=x_crossloadings_true,
+        y_loadings_true=y_loadings_true,
+        y_crossloadings_true=y_crossloadings_true,
+    )
+
+
+def subset_ds(ds, n_keep=10, keyvar='between_assocs'):
+    dsss_ = []
+    for px in ds.px.values:
+        dss_ = []
+        for r in ds.r.values:
+            mask = np.isfinite(ds[keyvar].sel(
+                px=px, r=r, n_per_ftr=ds.n_per_ftr[0], rep=0
+            )).values
+            ds_ = ds \
+                .sel(r=r, px=px, Sigma_id=mask) \
+                .reset_index('Sigma_id', drop=True)
+            ds_.coords['Sigma_id'] = np.arange(len(ds_.Sigma_id))
+            dss_.append(ds_)
+        dss_ = xr.concat(dss_, ds.r)
+        dsss_.append(dss_)
+    dsss_ = xr.concat(dsss_, ds.px)
+    return dsss_.sel(Sigma_id=np.arange(n_keep))

@@ -22,7 +22,7 @@ copyright = '2020, Markus Helmer'
 author = 'Markus Helmer'
 
 # The full version, including alpha/beta/rc tags
-release = '0.1'
+release = '0.4.0'
 
 
 # -- General configuration ---------------------------------------------------

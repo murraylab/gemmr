@@ -1,14 +1,20 @@
 import numpy as np
 import xarray as xr
 
+from scipy.spatial.distance import cdist
+
 from numpy.testing import assert_raises, assert_array_almost_equal, \
     assert_equal
 from xarray.testing import assert_allclose as assert_xr_allclose
 
+import gemmr.generative_model
 from gemmr.data import generate_example_dataset
+from gemmr.estimators import SVDCCA, SVDPLS
 from gemmr.util import _check_float, check_positive_definite, align_weights, \
-    nPerFtr2n, rank_based_inverse_normal_trafo, pc_spectrum_decay_constant
+    nPerFtr2n, rank_based_inverse_normal_trafo, pc_spectrum_decay_constant, \
+    _calc_true_loadings
 
+from testtools import assert_array_almost_equal_up_to_sign
 
 def test_check_float():
     _check_float(1, 'jk', .5, 1.5, 'inclusive')  # this should work
@@ -151,11 +157,36 @@ def test_pc_spectrum_decay_constant():
         assert np.isclose(ax_hat, ax, rtol=1e-2, atol=1e-2)
 
     ax, ay = -.5, -1.5
-    X, Y = generate_example_dataset('cca', px=5, py=10, ax=ax, ay=ay, n=10000)
+    X, Y = generate_example_dataset('cca', px=5, py=10, ax=ax, ay=ay, n=100000)
     _check(pc_spectrum_decay_constant(X, expl_var_ratios=(.99,))[0], ax)
     _check(pc_spectrum_decay_constant(Y, expl_var_ratios=(.99,))[0], ay)
 
     ax, ay = -1.2, -0.3
-    X, Y = generate_example_dataset('pls', px=13, py=3, ax=ax, ay=ay, n=10000)
+    X, Y = generate_example_dataset('pls', px=13, py=3, ax=ax, ay=ay, n=100000)
     _check(pc_spectrum_decay_constant(X, expl_var_ratios=(.99,))[0], ax)
     _check(pc_spectrum_decay_constant(Y, expl_var_ratios=(.99,))[0], ay)
+
+
+def test__calc_true_loadings():
+    px, py = 3, 5
+    for model, estr in [
+        ('cca', SVDCCA()),
+        ('pls', SVDPLS())
+    ]:
+        gm = gemmr.generative_model.GEMMR(model, wx=px, wy=py)
+
+        X, Y = gm.generate_data(1000000, random_state=0)
+        estr.fit(X, Y)
+        lXX = 1 - cdist(X.T, estr.x_scores_.T, metric='correlation')
+        lXY = 1 - cdist(X.T, estr.y_scores_.T, metric='correlation')
+        lYX = 1 - cdist(Y.T, estr.x_scores_.T, metric='correlation')
+        lYY = 1 - cdist(Y.T, estr.y_scores_.T, metric='correlation')
+
+        true_loadings = _calc_true_loadings(gm.Sigma_, px,
+                                            gm.x_weights_, gm.y_weights_)
+
+        decimal = 2
+        assert_array_almost_equal_up_to_sign(lXX, true_loadings['x_loadings_true'], decimal=decimal)
+        assert_array_almost_equal_up_to_sign(lXY, true_loadings['x_crossloadings_true'], decimal=decimal)
+        assert_array_almost_equal_up_to_sign(lYX, true_loadings['y_crossloadings_true'], decimal=decimal)
+        assert_array_almost_equal_up_to_sign(lYY, true_loadings['y_loadings_true'], decimal=decimal)

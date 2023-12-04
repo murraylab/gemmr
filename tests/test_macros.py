@@ -1,7 +1,7 @@
 import numpy as np
 import xarray as xr
 
-from numpy.testing import assert_allclose
+from numpy.testing import assert_allclose, assert_raises
 
 from gemmr.estimators import SVDPLS
 from gemmr.data import generate_example_dataset
@@ -25,11 +25,13 @@ def test_calc_p_value():
 
 def test_analyze_subsampled_and_resampled():
     estr = SVDPLS()
-    X, Y = generate_example_dataset('pls', n=32)
-    res = analyze_subsampled_and_resampled(estr, X, Y, permutations=3, n_perm_subsample=3, n_test_subsample=4)
-    assert isinstance(res['p_value'], float)
-    assert isinstance(res['whole_sample'], xr.Dataset)
+    X, Y = generate_example_dataset('pls', n=24)
+    assert_raises(ValueError, analyze_subsampled_and_resampled, estr, X, Y, n_test_subsample=4)
+    res = analyze_subsampled_and_resampled(estr, X, Y, permutations=3, n_perm_subsample=3, n_rep_subsample=3)
+    assert isinstance(res['full_sample'], xr.Dataset)
     assert isinstance(res['subsampled'], xr.Dataset)
+    assert 'p_value' in res['full_sample']
+    assert 'p_value' not in res['subsampled']
 
 
 def test_pairwise_weight_cosine_similarity():

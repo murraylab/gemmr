@@ -4,27 +4,27 @@ from scipy.stats import pearsonr
 from numpy.testing import assert_warns, assert_raises, assert_array_almost_equal, assert_allclose
 
 try:
-    from gemmr.estimators import SparseCCA
-    from gemmr.estimators.r_estimators import _check_penalty, _check_penalty_cv, _fit_and_score_scca, \
+    from gemmr.estimators import SparsePLS
+    from gemmr.estimators.r_estimators import _check_penalty, _check_penalty_cv, _fit_and_score_spls, \
         _select_best_penalties
 except ImportError:
     pass
-else:  # run tests only if rpy2 is available and SparseCCA can be imported
+else:  # run tests only if rpy2 is available and SparsePLS can be imported
 
-    def test_SparseCCA():
+    def test_SparsePLS():
 
         np.random.seed(0)
 
-        scca = SparseCCA(n_components=1)
+        scca = SparsePLS(n_components=1)
         assert_raises(ValueError, scca.fit, np.arange(20).reshape(10, 2), np.arange(30).reshape(10, 3))
         assert_raises(ValueError, scca.fit, np.arange(30).reshape(10, 3), np.arange(10).reshape(10, 1))
 
         assert_raises(ValueError, scca.fit, np.arange(30).reshape(10, 3), np.arange(10))
 
-        scca = SparseCCA(n_components=20)
+        scca = SparsePLS(n_components=20)
         assert_raises(ValueError, scca.fit, np.arange(30).reshape(10, 3), np.arange(30).reshape(10, 3))
 
-        scca = SparseCCA(n_components=2)
+        scca = SparsePLS(n_components=2)
         assert_warns(UserWarning, scca.fit, np.random.uniform(size=(10, 3)), np.random.uniform(size=(10, 2)))
 
         ###
@@ -34,30 +34,30 @@ else:  # run tests only if rpy2 is available and SparseCCA can be imported
         X = np.c_[corr_signal, corr_signal, corr_signal, np.random.normal(size=(n, 3))]
         Y = np.c_[np.random.normal(size=(n, 1)), corr_signal, corr_signal, corr_signal, np.random.normal(size=(n, 1))]
 
-        scca = SparseCCA(n_components=1, scale=False, optimize_penalties='NOT_AN_OPTION')
+        scca = SparsePLS(n_components=1, scale=False, optimize_penalties='NOT_AN_OPTION')
         assert_raises(ValueError, scca.fit, X, Y)
 
         # maximum penalty
-        scca = SparseCCA(n_components=1, scale=False, optimize_penalties=False, penaltyxs=0, penaltyys=0)
-        _test_SparseCCA_fit_results(scca, X, Y)
+        scca = SparsePLS(n_components=1, scale=False, optimize_penalties=False, penaltyxs=0, penaltyys=0)
+        _test_SparsePLS_fit_results(scca, X, Y)
         assert_allclose(scca.x_rotations_[[3, 4, 5]], 0)
         assert_allclose(scca.y_rotations_[[0, 4]], 0)
         max_penalties_covs = scca.covs_
 
         # no penalty
         scca.set_params(penaltyxs=1, penaltyys=1)
-        _test_SparseCCA_fit_results(scca, X, Y)
+        _test_SparsePLS_fit_results(scca, X, Y)
         assert np.all(scca.x_rotations_[[3, 4, 5]] != 0)
         assert np.all(scca.y_rotations_[[0, 4]] != 0)
         no_penalties_covs = scca.covs_
         assert max_penalties_covs[0] <= no_penalties_covs[0]
 
         # cv
-        scca = SparseCCA(n_components=1, scale=False, optimize_penalties='cv', penaltyxs=[0, 1], penaltyys=[0, 1], verbose=True)
+        scca = SparsePLS(n_components=1, scale=False, optimize_penalties='cv', penaltyxs=[0, 1], penaltyys=[0, 1], verbose=True)
         scca.fit(X, Y)
 
 
-    def _test_SparseCCA_fit_results(scca, X, Y):
+    def _test_SparsePLS_fit_results(scca, X, Y):
 
         scca.fit(X, Y)
 
@@ -114,7 +114,7 @@ else:  # run tests only if rpy2 is available and SparseCCA can be imported
         noise_vec = np.random.normal(size=(n, 1))
         X = np.c_[data_vec, noise_vec]
         Y = np.c_[noise_vec, data_vec]
-        score = _fit_and_score_scca(fitfun, X, Y, slice(None), slice(None), penalties=(None, None))
+        score = _fit_and_score_spls(fitfun, X, Y, slice(None), slice(None), penalties=(None, None))
         assert np.isclose(score, 1)
 
 
@@ -127,7 +127,7 @@ else:  # run tests only if rpy2 is available and SparseCCA can be imported
         assert np.all(_select_best_penalties(penalty_candidates) ==[.3, .1])
 
 
-    # def test_SparseCCA_parallel():
+    # def test_SparsePLS_parallel():
     #     np.random.seed(0)
     #
     #     n = 10000
@@ -136,6 +136,6 @@ else:  # run tests only if rpy2 is available and SparseCCA can be imported
     #     Y = np.c_[np.random.normal(size=(n, 1)), corr_signal, corr_signal, corr_signal, np.random.normal(size=(n, 1))]
     #
     #     # maximum penalty
-    #     scca = SparseCCA(n_components=1, scale=False, optimize_penalties='cv', penaltyxs=[0, 1], penaltyys=[0, 1],
+    #     scca = SparsePLS(n_components=1, scale=False, optimize_penalties='cv', penaltyxs=[0, 1], penaltyys=[0, 1],
     #                      n_jobs=-1, verbose=True)
     #     scca.fit(X, Y)

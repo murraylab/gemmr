@@ -1,4 +1,6 @@
+from pathlib import Path
 import numpy as np
+import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
 from holoviews import opts
@@ -8,10 +10,23 @@ from holoviews import opts
 
 n_per_ftr_typical = 5
 
+### SOURCE DATA
+
+def save_source_data(di, subfolder, base_folder='fig/source_data/'):
+
+    folder = Path(base_folder) / subfolder
+    folder.mkdir(exist_ok=True)
+
+    for label, df in di.items():
+        # print(label)
+        df.to_csv(folder / (label + '.csv'))
+
 ### PLOTTING
 
-plt.rcParams['font.family'] = 'Helvetica'
-
+matplotlib.rcParams['pdf.fonttype'] = 42
+matplotlib.rcParams['ps.fonttype'] = 42
+plt.rcParams['font.family'] = 'sans-serif'
+matplotlib.rcParams['font.sans-serif'] = ['Helvetica', 'Arial']
 
 cmap_n_per_ftr = 'cool'
 cmap_r = 'winter_r'
@@ -29,7 +44,7 @@ default_fontsizes = dict(title=8, labels=8, ticks=7, minor_ticks=7, legend=7)
 
 
 fig_opts = [
-    opts.Layout(aspect_weight=1, fig_inches=(3.42, None), sublabel_size=10, fontsize=8), 
+    opts.Layout(aspect_weight=1, fig_inches=(3.42, None), sublabel_format="{alpha}", sublabel_size=10, fontsize=8), 
     opts.Overlay(fontsize=default_fontsizes,),
     opts.Area(fontsize=default_fontsizes),
     opts.Arrow(textsize=default_fontsizes),
@@ -47,14 +62,16 @@ fig_opts = [
 # hv hooks
 
 class Suptitle:
-    def __init__(self, suptitle, color, y=1.175):
+    def __init__(self, suptitle, color, y=1.175, fontsize=10, fontweight='bold'):
         self.suptitle = suptitle
         self.color = color
         self.y = y
+        self.fontsize = fontsize
+        self.fontweight = fontweight
     def __call__(self, plot, element):
         ax = plot.handles['axis']
         ax.text(.5, self.y, self.suptitle, ha='center', va='bottom', color=self.color,
-                fontdict=dict(size=10, weight='bold'), transform=ax.transAxes)
+                fontdict=dict(size=self.fontsize, weight=self.fontweight), transform=ax.transAxes)
     
 def suptitle_cca(plot, element):
     Suptitle('CCA', clr_cca)(plot, element)

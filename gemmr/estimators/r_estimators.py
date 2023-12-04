@@ -21,13 +21,13 @@ from rpy2.robjects import pandas2ri
 
 from .helpers import _center_scale_xy, CanonicalCorrelationScorerMixin
 
-__all__ = ['SparseCCA']
+__all__ = ['SparsePLS']
 
 pandas2ri.activate()
 
 
-class SparseCCA(BaseEstimator, CanonicalCorrelationScorerMixin):
-    """SparseCCA algorithm from Witten et al. (2009).
+class SparsePLS(BaseEstimator, CanonicalCorrelationScorerMixin):
+    """SparsePLS (or sparse "CCA") algorithm from Witten et al. (2009).
 
     This is a sklearn-style wrapper for the function ``CCA`` from R-package
     ``PMA``.
@@ -72,7 +72,7 @@ class SparseCCA(BaseEstimator, CanonicalCorrelationScorerMixin):
     """
 
     def __init__(self, n_components=1, typex='standard', typey='standard',
-                 penaltyxs=None, penaltyys=None,
+                 penaltyxs=None, penaltyys=None, penalty_pairing='product',
                  niter=15,
                  scale=False, std_ddof=1,
                  optimize_penalties='cv',
@@ -83,6 +83,7 @@ class SparseCCA(BaseEstimator, CanonicalCorrelationScorerMixin):
         self.typey = typey
         self.penaltyxs = penaltyxs
         self.penaltyys = penaltyys
+        self.penalty_pairing = penalty_pairing
         self.niter = niter
         self.scale = scale
         self.std_ddof = std_ddof
@@ -115,10 +116,10 @@ class SparseCCA(BaseEstimator, CanonicalCorrelationScorerMixin):
             Y = Y.reshape(-1, 1)
 
         if (X.shape[1] < 3):
-            raise ValueError('SparseCCA requires at least 3 features in '
+            raise ValueError('SparsePLS requires at least 3 features in '
                              'dataset X, got {}'.format(X.shape[1]))
         if (Y.shape[1] < 2):
-            raise ValueError('SparseCCA requires at least 2 features in '
+            raise ValueError('SparsePLS requires at least 2 features in '
                              'dataset Y, got {}'.format(Y.shape[1]))
 
         # Scale (in place)
@@ -270,7 +271,7 @@ class SparseCCA(BaseEstimator, CanonicalCorrelationScorerMixin):
         Parameters
         ----------
         fitfun : callable
-            defined within :func:`SparseCCA.fit`
+            defined within :func:`SparsePLS.fit`
         X : np.ndarray (n_samples, n_X_features)
             :math:`X` data matrix
         Y : np.ndarray (n_samples, n_Y_features)
@@ -297,12 +298,17 @@ class SparseCCA(BaseEstimator, CanonicalCorrelationScorerMixin):
 
             penaltyxs = _check_penalty_cv(penaltyxs)
             penaltyys = _check_penalty_cv(penaltyys)
-            penalty_pairs = list(itertools.product(penaltyxs, penaltyys))
+            if self.penalty_pairing == 'product':
+                penalty_pairs = list(itertools.product(penaltyxs, penaltyys))
+            elif self.penalty_pairing == 'zip':
+                penalty_pairs = list(zip(penaltyxs, penaltyys))
+            else:
+                raise ValueError('Invalid penalty_pairing')
 
             if self.optimize_penalties == 'cv':
                 cv = check_cv(self.cv)
                 cv_scores = [
-                    _fit_and_score_scca(fitfun, X, Y, train, test,
+                    _fit_and_score_spls(fitfun, X, Y, train, test,
                                         penalty_pair)
                     for penalty_pair in penalty_pairs
                     for train, test in cv.split(X, Y, groups=groups)
@@ -318,7 +324,7 @@ class SparseCCA(BaseEstimator, CanonicalCorrelationScorerMixin):
 
                 if self.verbose:
                     print(
-                        '[SparseCCA] penalties = {}'.format(best_penalty_pair))
+                        '[SparsePLS] penalties = {}'.format(best_penalty_pair))
 
                 return best_penalty_pair
 
@@ -350,18 +356,18 @@ def _check_penalty(penalty):
     return penalty
 
 
-def _fit_and_score_scca(fitfun, X, Y, train, test, penalties, component=0):
-    """Fit SparseCCA and return the fit score
+def _fit_and_score_spls(fitfun, X, Y, train, test, penalties, component=0):
+    """Fit SparsePLS and return the fit score
 
     Fitting is assumed to be done internally in ``fitfun`` (defined within
-    :func:`SparseCCA.fit`). The score is the Pearson correlation between X and
+    :func:`SparsePLS.fit`). The score is the Pearson correlation between X and
     Y scores, i.e. :math:`corr(Xu, Yv)`, as suggested in Witten et al. (2009)
 
     Parameters
     ----------
     fitfun : callable
         fits the estimator and returns an object containing results. This
-        function is defined within :func:`SparseCCA.fit`
+        function is defined within :func:`SparsePLS.fit`
     X : np.ndarray (n_samples, n_X_features)
         :math:`X` data matrix
     Y : np.ndarray (n_samples, n_Y_features)

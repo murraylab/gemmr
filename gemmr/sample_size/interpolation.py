@@ -2,6 +2,7 @@
 
 import numpy as np
 import xarray as xr
+from scipy.stats import linregress
 from scipy.interpolate import InterpolatedUnivariateSpline
 
 from ..metrics import mk_betweenAssocRelError, mk_weightError, \
@@ -163,6 +164,7 @@ def _calc_n_required(x, y, y_target_min, y_target_max, verbose=False):
     # 3) if y values are either all smaller than lower error bound or all
     # greater than upper error bound return nan
     elif (y <= y_target_min).all() | (y >= y_target_max).all():
+        # print('y out of target range')
         return np.nan
 
     # 4) else (i.e. if there are y-values outside and inside error bounds) find
@@ -172,7 +174,16 @@ def _calc_n_required(x, y, y_target_min, y_target_max, verbose=False):
 
         # InterpolatedUnivariateSpline raises exception otherwise, not sure why
         if len(y) < 4:
-            return np.nan
+            # use linear regression
+            linreg = linregress(x, y)
+            root1 = (y_target_max - linreg.intercept) / linreg.slope
+            root2 = (y_target_min - linreg.intercept) / linreg.slope
+            root = min([root1, root2])
+            if (not np.isfinite(root)) or \
+                    (not (np.min(x) <= root <= np.max(x))):
+                print('[_calc_n_required] invalid root')
+                return np.nan
+            return root
 
         if (y > y_target_max).any() & (y < y_target_max).any():
 

@@ -11,11 +11,14 @@ from unittest.mock import patch, create_autospec
 from scipy.stats import pearsonr
 
 from gemmr.generative_model import generate_data
-from gemmr.sample_analysis.analyzers import _calc_true_loadings
+from gemmr.util import _calc_true_loadings
 from gemmr.sample_analysis.addon import *
 # don't confuse pytest:
-del test_scores
-from gemmr.sample_analysis.addon import test_scores as calc_test_scores
+del test_scores, test_scores_true_spearman, test_scores_true_pearson, test_loadings, test_loadings_true_pearson
+from gemmr.sample_analysis.addon import \
+    test_scores as calc_test_scores, \
+    test_scores_true_spearman as calc_test_scores_true_spearman, \
+    test_loadings_true_pearson as calc_test_loadings_true_pearson
 
 
 def test_remove_weights_loadings():
@@ -32,22 +35,26 @@ def test_remove_weights_loadings():
     assert 'y_loadings' not in ds
 
 
-def test_remove_cv_weights():
+def test_remove_cv_weights_loadings():
     ds = xr.Dataset(dict(
         x_weights_cv=xr.DataArray(np.arange(6).reshape(2, 3), dims=('a', 'b')),
         y_weights_cv=xr.DataArray(np.arange(6).reshape(2, 3), dims=('a', 'b')),
+        x_loadings_cv=xr.DataArray(np.arange(6).reshape(2, 3), dims=('a', 'b')),
+        y_loadings_cv=xr.DataArray(np.arange(6).reshape(2, 3), dims=('a', 'b')),
     ))
-    remove_cv_weights(None, None, None, None, None, None, None, ds)
+    remove_cv_weights_loadings(None, None, None, None, None, None, None, ds)
     assert 'x_weights_cv' not in ds
     assert 'y_weights_cv' not in ds
+    assert 'x_loadings_cv' not in ds
+    assert 'x_loadings_cv' not in ds
 
 
 def test_weights_true_cossim():
-    x_weights_true = np.array([1, 0])
-    x_weights = np.array([.1, np.sqrt(1-.1**2)])
+    x_weights_true = np.array([1, 0]).reshape(-1, 1)
+    x_weights = np.array([.1, np.sqrt(1-.1**2)]).reshape(-1, 1)
     results = xr.Dataset(dict(
-        x_weights=xr.DataArray(x_weights, dims=('x_feature',)),
-        y_weights=xr.DataArray(x_weights, dims=('y_feature',)),
+        x_weights=xr.DataArray(x_weights, dims=('x_feature', 'mode')),
+        y_weights=xr.DataArray(x_weights, dims=('y_feature', 'mode')),
     ))
     weights_true_cossim(None, None, None, None, None, x_weights_true, x_weights_true, results)
     assert np.allclose(results.x_weights_true_cossim, .1)
@@ -81,7 +88,7 @@ def test_test_scores():
     assert 'y_test_scores' not in results
 
 
-def test_scores_true_spearman():
+def test_test_scores_true_spearman():
     class MockEstr():
         def transform(self, X, Y):
             return X, Y
@@ -93,17 +100,17 @@ def test_scores_true_spearman():
 
     test_statistics = mk_test_statistics_scores(Xtest, Xtest, np.eye(1), np.eye(1))
     results = xr.Dataset()
-    assert_raises(KeyError, scores_true_spearman, estr, None, None, None, None, None, None, results, Xtest=Xtest, Ytest=Xtest)
-    assert_raises(KeyError, scores_true_spearman, estr, None, None, None, None, None, None, results, test_statistics=test_statistics)
+    assert_raises(KeyError, calc_test_scores_true_spearman, estr, None, None, None, None, None, None, results, Xtest=Xtest, Ytest=Xtest)
+    assert_raises(KeyError, calc_test_scores_true_spearman, estr, None, None, None, None, None, None, results, test_statistics=test_statistics)
 
     # required to run before scores_true_spearman
     calc_test_scores(estr, None, None, None, None, None, None, results, Xtest=Xtest, Ytest=Ytest)
-    scores_true_spearman(estr, None, None, None, None, None, None, results, Xtest=Xtest, Ytest=Xtest, test_statistics=test_statistics)
+    calc_test_scores_true_spearman(estr, None, None, None, None, None, None, results, Xtest=Xtest, Ytest=Xtest, test_statistics=test_statistics)
     assert results.x_test_scores_true_spearman == 1.
     assert results.y_test_scores_true_spearman == 1.
 
 
-def test_loadings_true_pearson():
+def test_test_loadings_true_pearson():
 
     px, py = 5, 6
     pmin = min(px, py)
@@ -126,7 +133,7 @@ def test_loadings_true_pearson():
 
     results = xr.Dataset()
 
-    assert_raises(KeyError, loadings_true_pearson, None, None, None, None, None, None, None, results,
+    assert_raises(KeyError, calc_test_loadings_true_pearson, None, None, None, None, None, None, None, results,
                   true_loadings=true_loadings, Xtest=Xtest, Ytest=Xtest)
 
     results['x_test_scores'] = xr.DataArray(
@@ -136,16 +143,16 @@ def test_loadings_true_pearson():
         y_test_scores, dims=('test_subject', 'mode'),
     )
 
-    assert_raises(KeyError, loadings_true_pearson, None, None, None, None, None, None, None, results,
+    assert_raises(KeyError, calc_test_loadings_true_pearson, None, None, None, None, None, None, None, results,
                   true_loadings=true_loadings)
-    assert_raises(KeyError, loadings_true_pearson, None, None, None, None, None, None, None, results,
+    assert_raises(KeyError, calc_test_loadings_true_pearson, None, None, None, None, None, None, None, results,
                   Xtest=Xtest, Ytest=Ytest)
 
-    assert_raises(ValueError, loadings_true_pearson, None, Xtest, None, None, None, None, None, results,
+    assert_raises(ValueError, calc_test_loadings_true_pearson, None, Xtest, None, None, None, None, None, results,
                   true_loadings=true_loadings, Xtest=Xtest, Ytest=Xtest)
 
-    loadings_true_pearson(None, Xtest, None, None, None, None, None, results,
-                          true_loadings=true_loadings, Xtest=Xtest, Ytest=Ytest)
+    calc_test_loadings_true_pearson(None, Xtest, None, None, None, None, None, results,
+                               true_loadings=true_loadings, Xtest=Xtest, Ytest=Ytest)
 
     assert_allclose(results.x_test_loadings_true_pearson.values, 1, rtol=1e-2)
     assert_allclose(results.y_test_loadings_true_pearson.values, 1, rtol=1e-2)
@@ -209,10 +216,10 @@ def test_weights_pc_cossim(MockPCA):
     target_da = xr.DataArray([
         [1, 1./np.sqrt(2), 3./5],
         [0, 1./np.sqrt(2), 4./5]
-    ], dims=('x_feature', 'mode'))
+    ], dims=('x_pc', 'mode'), coords=dict(x_pc=np.arange(2)))
 
     assert_xr_allclose(results.x_weights_pc_cossim, target_da)
-    assert_xr_allclose(results.y_weights_pc_cossim, target_da.rename(x_feature='y_feature'))
+    assert_xr_allclose(results.y_weights_pc_cossim, target_da.rename(x_pc='y_pc'))
 
 
 def test_sparseCCA_penalties():
@@ -267,11 +274,11 @@ def test_cv():
     assert 'between_covs_cv' in results
     assert results['between_corrs_cv'].sel(cv='kfold2', mode=0) == 1
 
-    assert_allclose(results.x_weights_cv.sel(cv='kfold2', mode=0).values, np.arange(2))
-    assert_allclose(results.y_weights_cv.sel(cv='kfold2', mode=0).values, np.arange(2))
+    assert_allclose(results.x_weights_cv.sel(cv='kfold2', mode=0).values, [np.arange(2)]*2)
+    assert_allclose(results.y_weights_cv.sel(cv='kfold2', mode=0).values, [np.arange(2)]*2)
 
-    assert results.x_weights_cv.dims == ('cv', 'x_feature', 'mode')
-    assert results.y_weights_cv.dims == ('cv', 'y_feature', 'mode')
+    assert results.x_weights_cv.dims == ('cv', 'fold', 'x_feature', 'mode')
+    assert results.y_weights_cv.dims == ('cv', 'fold', 'y_feature', 'mode')
 
 
 def test_mk_test_statistics_scores():

@@ -5,6 +5,11 @@ import warnings
 import numpy as np
 from scipy.stats import zscore
 
+# explicitly require this experimental feature
+from sklearn.experimental import enable_iterative_imputer  # noqa
+# now you can import normally from sklearn.impute
+from sklearn.impute import SimpleImputer, IterativeImputer
+
 from statsmodels.stats.correlation_tools import cov_nearest
 
 from tqdm import trange
@@ -78,6 +83,8 @@ def deconfound(X, confounders, demean_confounders=False):
     deconfounded : np.ndarray (n_samples, n_features)
         deconfounded data matrix
     """
+    if confounders.shape[1] == 0:  # nothing to do
+        return X
     if demean_confounders:
         confounders = confounders - confounders.mean(0, keepdims=True)
     deconfound_beta = np.linalg.pinv(confounders) @ X
@@ -91,7 +98,8 @@ def preproc_smith(fc, sm,
                   hcp_confounder_software_version=True,
                   squared_confounders=False,
                   hcp_data_dict_correct_pct_to_t=False,
-                  include_N2=True):
+                  include_N2=False,
+                  confounds_impute=0):
     """Data preprocessing pipeline from Smith et al. (2015).
 
     Parameters
@@ -132,6 +140,11 @@ def preproc_smith(fc, sm,
         if True, the data matrix, normalized by the absolute value of the mean
         of each feature, will be used as additional features, concatenating it
         horizontally to the z-scored data matrix
+    confounds_impute : None, 0 or "mice"
+        if 0, missing confound values are imputed with 0 (after an
+        inverse normal transformation), if "mice"
+        sklearn.impute.IterativeImputer is used, if None no imputation is
+        performed
 
     Returns
     -------
@@ -139,9 +152,9 @@ def preproc_smith(fc, sm,
         with items:
 
         * X : np.ndarray (n_samples, n_X_features)
-            dataset X
+            dataset X (principal component scores)
         * Y : np.ndarray (n_samples, n_Y_features)
-            dataset Y
+            dataset Y (principal component scores)
         * X_whitened : np.ndarray (n_samples, n_X_features)
             whitened dataset X
         * Y_whitened : np.ndarray (n_samples, n_Y_features)
@@ -155,6 +168,10 @@ def preproc_smith(fc, sm,
             X principal component axes
         * confounders : np.ndarray (n_samples, n_features)
             confounder data matrix
+        * X_preproc : np.ndarray (n_samples, n_X_features)
+            preprocessed X data (not PC-ed)
+        * Y_preproc : np.ndarray (n_samples, n_Y_features)
+            preprocessed Y data (not PC-ed)
 
     References
     ----------
@@ -167,11 +184,12 @@ def preproc_smith(fc, sm,
         sm, confounders=confounders, hcp_confounders=hcp_confounders,
         hcp_confounder_software_version=hcp_confounder_software_version,
         squared_confounders=squared_confounders,
-        impute0=True)
+        impute=confounds_impute)
 
-    uu1, uu1_white, vv1 = preproc_fc(fc, confounders, include_N2=include_N2)
+    uu1, uu1_white, vv1, N4 = preproc_fc(
+        fc, confounders, include_N2=include_N2)
 
-    uu2, uu2_white, S4_raw, feature_names = preproc_sm(
+    uu2, uu2_white, S4_raw, S4_deconfounded, feature_names = preproc_sm(
         sm, confounders, final_deconfound=final_sm_deconfound,
         feature_names=feature_names,
         hcp_data_dict_correct_pct_to_t=hcp_data_dict_correct_pct_to_t)
@@ -185,6 +203,8 @@ def preproc_smith(fc, sm,
         feature_names=feature_names,
         X_pc_axes=vv1,
         confounders=confounders,
+        X_preproc=N4,
+        Y_preproc=S4_deconfounded,
     )
 
 
@@ -219,6 +239,9 @@ def preproc_sm(sm, confounders, final_deconfound=True, feature_names=None,
         whitened processed dataset Y
     S4_raw : np.ndarray (n_samples, n_Y_features)
         unprocessed Y data comprising only the selected features
+    S4_deconfounded : np.ndarray (n_samples, n_Y_features)
+        filtered and transformed data matrix (but still contains missing
+        values)
     feature_names : list
         ordered list of feature names corresponding to the columns of Y
     """
@@ -228,13 +251,15 @@ def preproc_sm(sm, confounders, final_deconfound=True, feature_names=None,
     # estimate covariance-matrix, ignoring missing values
     # NOTE: This is the n_subjects x n_subjects covariance matrix across
     # features!
-    S_cov = np.nan * np.empty((S4_raw.shape[0], S4_raw.shape[0]))
-    for i in trange(len(S_cov), desc='subject', leave=False):
-        for j in range(i + 1):
-            mask = np.isfinite(S4_deconfounded[i]) \
-                   & np.isfinite(S4_deconfounded[j])
-            S_cov[i, j] = S_cov[j, i] = np.cov(
-                S4_deconfounded[i, mask], S4_deconfounded[j, mask])[0, 1]
+    # S_cov = np.nan * np.empty((S4_raw.shape[0], S4_raw.shape[0]))
+    # for i in trange(len(S_cov), desc='subject', leave=False):
+    #     for j in range(i + 1):
+    #         mask = np.isfinite(S4_deconfounded[i]) \
+    #                & np.isfinite(S4_deconfounded[j])
+    #         S_cov[i, j] = S_cov[j, i] = np.cov(
+    #             S4_deconfounded[i, mask], S4_deconfounded[j, mask])[0, 1]
+    S_cov = np.ma.cov(np.ma.masked_invalid(S4_deconfounded)).data
+    print('S_cov', S_cov.shape)
     assert np.isfinite(S_cov).all()
     S_cov_psd = cov_nearest(S_cov, threshold=nearest_psd_threshold)
     assert np.isfinite(S_cov_psd).all()
@@ -270,7 +295,7 @@ def preproc_sm(sm, confounders, final_deconfound=True, feature_names=None,
         uu2_white = deconfound(uu2_white, confounders)
         uu2 = deconfound(uu2, confounders)
 
-    return uu2, uu2_white, S4_raw, feature_names
+    return uu2, uu2_white, S4_raw, S4_deconfounded, feature_names
 
 
 def prepare_sm(sm, confounders, feature_names,
@@ -358,6 +383,9 @@ def select_sm_features(sm, feature_names, hcp_data_dict_correct_pct_to_t):
     S4_raw = S4_raw.values.astype(float)
     assert S4_raw.shape[1] == len(feature_names)
     print(f'{S4_raw.shape[1]} out of {total_n_features} features found')
+    if S4_raw.shape[1] < total_n_features:
+        print("Missing features (after potential renaming in _check_features)"
+              ":", [f for f in feature_names if f not in sm])
     return S4_raw, feature_names
 
 
@@ -396,7 +424,7 @@ def _check_features(feature_names, available_feature_names,
     # else: pass  # use feature_names as is
     # unique feature_names, keeping order (dict is insertion ordered!)
 
-    feature_names = list(dict.fromkeys(feature_names))
+    feature_names = np.array(list(dict.fromkeys(feature_names)))
 
     if hcp_data_dict_correct_pct_to_t:
         for old, new in [
@@ -418,7 +446,7 @@ def _check_features(feature_names, available_feature_names,
         ]:
             feature_names = np.where(feature_names == old, new, feature_names)
 
-    return feature_names
+    return feature_names.tolist()
 
 
 def preproc_fc(fc, confounders, include_N2=True):
@@ -443,6 +471,8 @@ def preproc_fc(fc, confounders, include_N2=True):
         whitened, preprocessed  principal component scores of ``fc``
     vv1 : np.ndarray (n_features, n_components)
         principal component axes
+    N4 : np.ndarray (n_samples, n_features)
+        preprocessed original-variable data
     """
 
     try:
@@ -460,6 +490,7 @@ def preproc_fc(fc, confounders, include_N2=True):
     N4 = deconfound(N3, confounders)
     N4 -= N4.mean(0, keepdims=True)
     print(N4.shape)
+
     # PCA
     uu1, ss1, vv1h = np.linalg.svd(N4, full_matrices=False)
     vv1 = vv1h.T
@@ -470,11 +501,14 @@ def preproc_fc(fc, confounders, include_N2=True):
     uu1_white = uu1
     uu1 = uu1 * ss1.reshape(1, -1)
 
-    assert np.allclose(uu1.mean(0), 0)
-    assert np.allclose(uu1_white.var(0), 1)
-    assert np.allclose(uu1.var(0), ss1**2)
+    # due to noise it's possible that some low-variance PCs don't pass the
+    # asserts
+    n_check = int(.95*uu1.shape[1])
+    assert np.allclose(uu1.mean(0)[:n_check], 0)
+    assert np.allclose(uu1_white.var(0)[:n_check], 1)
+    assert np.allclose(uu1.var(0)[:n_check], ss1[:n_check]**2)
 
-    return uu1, uu1_white, vv1
+    return uu1, uu1_white, vv1, N4[:, :N.shape[1]]
 
 
 class PreprocWarning(Warning):
@@ -487,7 +521,7 @@ def prepare_confounders(
         hcp_confounders=False,
         hcp_confounder_software_version=True,
         squared_confounders=False,
-        impute0=True,
+        impute=0,
         #headmotion_features=('movement_AbsoluteRMS_mean',
         #                     'movement_RelativeRMS_mean')
 ):
@@ -511,14 +545,16 @@ def prepare_confounders(
     squared_confounders : bool
         if ``True`` the squares of all confounders (except software version, if
         used) are used as additional confounders
-    impute0 : bool
-        if True, missing confound values are imputed with 0 (after an
-        inverse normal transformation)
+    impute : None, 0, "mean", "median", "mice"
+        if 0, missing confound values are imputed with 0 (after an
+        inverse normal transformation), if "median" median value is imputed,
+        if "mice" sklearn.impute.IterativeImputer is used, if None no imputation is
+        performed
 
     Returns
     -------
     confounders : np.ndarray (n_samples, n_features)
-        confounder data matrix, if impute0 is ``False`` it can have ``NaN``s
+        confounder data matrix, if impute is ``None`` it can have ``NaN``s
 
     Raises
     ------
@@ -561,16 +597,30 @@ def prepare_confounders(
     if confounders_matrix.shape[1] > 0:
 
         # inverse normal transform (this also results in mean 0)
-        confounders_matrix = \
-            rank_based_inverse_normal_trafo(confounders_matrix)
+        # confounders_matrix = \
+        #     rank_based_inverse_normal_trafo(confounders_matrix)
 
-        if impute0:
+        if impute is not None:
             # impute 0 for missing values
-            print('{:.2f}% of values in confounders missing, imputing 0 for '
-                  'these'.format(
+            print('{:.2f}% of values in confounders missing, imputing'.format(
                 100 * (1 - np.isfinite(confounders_matrix).mean())))
 
-            confounders_matrix[~np.isfinite(confounders_matrix)] = 0
+            if impute == 0:
+                # inverse normal transform (this also results in mean 0)
+                confounders_matrix = \
+                   rank_based_inverse_normal_trafo(confounders_matrix)
+                confounders_matrix[~np.isfinite(confounders_matrix)] = 0
+
+            elif impute in ("mean", "median"):
+                confounders_matrix = SimpleImputer(strategy=impute) \
+                    .fit_transform(confounders_matrix)
+
+            elif impute == 'mice':
+                confounders_matrix = IterativeImputer(random_state=0) \
+                    .fit_transform(confounders_matrix)
+
+            else:
+                raise ValueError(f"Invalid impute: {impute}")
 
         else:
             print('{:.2f}% of values in confounders missing'.format(
@@ -579,6 +629,9 @@ def prepare_confounders(
 
         # normalise
         confounders_matrix = zscore(confounders_matrix, nan_policy='omit')
+
+    else:
+        print('No confounders specified')
 
     return confounders_matrix
 
@@ -590,7 +643,7 @@ def preproc_minimal(fc, sm,
                   hcp_confounder_software_version=True,
                   squared_confounders=False,
                   hcp_data_dict_correct_pct_to_t=False,
-                  confounds_impute0=False):
+                  confounds_impute=False):
     """Minimal data preprocessing pipeline.
 
     Imputation can be chosen as an option for confounders. Subsequently, only
@@ -626,15 +679,21 @@ def preproc_minimal(fc, sm,
         concerns only feature_names from HCP data dictionary. If ``True``
         a number of feature_names are replaced, see
         :func:`_check_feature_names`.
-    confounds_impute0 : bool
-        if True, missing confound values are imputed with 0 (after an
-        inverse normal transformation)
+    confounds_impute : None, 0 or "mice"
+        if 0, missing confound values are imputed with 0 (after an
+        inverse normal transformation), if "mice"
+        sklearn.impute.IterativeImputer is used, if None no imputation is
+        performed
 
     Returns
     -------
     preprocessed_data : dict
         with items:
 
+        * Xpreproc : np.ndarray (n_samples, n_Xraw_features)
+            The preprocessed X data, deconfounded and z-scored, but NOT PCA-ed
+        * Ypreproc : np.ndarray (n_samples, n_Yraw_features)
+            The preprocessed Y data, deconfounded and z-scored, but NOT PCA-ed
         * X : np.ndarray (n_samples, n_X_features)
             dataset X
         * Y : np.ndarray (n_samples, n_Y_features)
@@ -663,7 +722,7 @@ def preproc_minimal(fc, sm,
         sm, confounders=confounders, hcp_confounders=hcp_confounders,
         hcp_confounder_software_version=hcp_confounder_software_version,
         squared_confounders=squared_confounders,
-        impute0=confounds_impute0)
+        impute=confounds_impute)
 
     sm_raw, feature_names = \
         select_sm_features(sm, feature_names, hcp_data_dict_correct_pct_to_t)
@@ -694,12 +753,14 @@ def preproc_minimal(fc, sm,
         assert np.allclose(U_white.var(0), 1)
         assert np.allclose(U.var(0), _s ** 2)
 
-        return U, U_white, V
+        return Xdz, U, U_white, V
 
-    UX, UX_white, VX = _minimal_preproc(fc, confounders)
-    UY, UY_white, VY = _minimal_preproc(sm_raw, confounders)
+    Xpreproc, UX, UX_white, VX = _minimal_preproc(fc, confounders)
+    Ypreproc, UY, UY_white, VY = _minimal_preproc(sm_raw, confounders)
 
     return dict(
+        Xpreproc=Xpreproc,
+        Ypreproc=Ypreproc,
         X=UX,
         Y=UY,
         X_whitened=UX_white,

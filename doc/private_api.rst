@@ -9,21 +9,6 @@ generative_model
 .. autosummary::
    :toctree: _autosummary
 
-   _mk_Sigmaxy
-   _find_latent_mode_vectors
-   _find_latent_mode_vectors_qr
-   _find_latent_mode_vectors_opti
-   _find_latent_mode_vectors_pc1
-   _add_lowvariance_subspace_components
-   _generate_random_dominant_subspace_rotations
-   _generate_dominant_subspace_rotations_from_opti
-   _assemble_Sigmaxy_pls
-   _assemble_Sigmaxy_cca
-   _Sigmaxy_negative_min_eval
-   _variance_explained_by_latent_modes
-   calc_schur_complement
-   _check_subspace_dimension
-
 metric
 ------
 

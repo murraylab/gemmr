@@ -28,7 +28,7 @@ A typical use case of :func:`analyze_model_parameters` is the following:
         addons=[
             addon.weights_true_cossim,
             addon.test_scores,
-            addon.scores_true_spearman,
+            addon.test_scores_true_pearson,
             addon.loadings_true_pearson,
             addon.remove_weights_loadings,
             addon.remove_test_scores

@@ -118,14 +118,18 @@ def prep_data_for_lm(ds, n_reqs, include_latent_explained_vars,
     coef_names : list
         labels for included linear model coefficients (first one is "const")
     """
+
+    if include_latent_explained_vars:
+        raise ValueError("include_latent_explained_vars is deprecated")
+
     lm_vars = xr.Dataset(dict(
         log_n_reqs=np.log(n_reqs),
         ptot=ds.px + ds.py,
         pdiff=np.abs(ds.py - ds.px),
         r_true=ds[f'{prefix}between_corrs_true'],
         axPlusy=ds[f'{prefix}ax'] + ds[f'{prefix}ay'],
-        latent_vars_xTimesy=ds[f'{prefix}latent_expl_var_ratios_x']
-                            * ds[f'{prefix}latent_expl_var_ratios_y'],
+        #latent_vars_xTimesy=ds[f'{prefix}latent_expl_var_ratios_x']
+        #                    * ds[f'{prefix}latent_expl_var_ratios_y'],
     )).stack(it=('px', 'r', 'Sigma_id'))
     X = [
         -np.log(lm_vars.r_true.values),
@@ -205,26 +209,10 @@ def fit_linear_model(criterion, model, estr=None, tag=None, target_power=0.9,
     """
 
     if model == 'cca':
-        ds = xr.concat([
-            load_outcomes('sweep_cca_cca_random_sum+-2+0_wOtherModel',
-                          model='cca', data_home=data_home
-                          ).drop('Sigma_id'),
-            load_outcomes('sweep_cca_cca_random_sum+-3+-2_wOtherModel',
-                          model='cca', data_home=data_home
-                          ).drop('Sigma_id')
-        ], 'Sigma_id').sel(mode=0)
-        del ds['weight_selection_algorithm']
+        ds = load_outcomes('sweep_cca_cca_random_sum+-3+0_wOtherModel', model='cca', data_home=data_home).sel(mode=0)
 
     elif model == 'pls':
-        ds = xr.concat([
-            load_outcomes('sweep_pls_pls_random_sum+-2+0_wOtherModel',
-                          model='pls', data_home=data_home
-                          ).drop('Sigma_id'),
-            load_outcomes('sweep_pls_pls_random_sum+-3+-2_wOtherModel',
-                          model='pls', data_home=data_home
-                          ).drop('Sigma_id')
-        ], 'Sigma_id').sel(mode=0)
-        del ds['weight_selection_algorithm']
+        ds = load_outcomes('sweep_pls_pls_random_sum+-3+0_wOtherModel', model='pls', data_home=data_home).sel(mode=0)
 
     else:
         raise ValueError(f'Invalid argument model: {model}')

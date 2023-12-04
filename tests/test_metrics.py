@@ -57,7 +57,7 @@ def test_mk_weightError():
 
 
 def test_mk_scoreError():
-    ds = _setup_ds(['x_test_scores_true_spearman', 'y_test_scores_true_spearman'], (-1, 1))
+    ds = _setup_ds(['x_test_scores_true_pearson', 'y_test_scores_true_pearson'], (-1, 1))
     _test_metric(mk_scoreError, ds, 0, 1)
 
 

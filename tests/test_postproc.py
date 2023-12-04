@@ -81,3 +81,34 @@ def test_remove_test_scores():
     remove_test_scores(ds)
     assert 'x_test_scores' not in ds
     assert 'y_test_scores' not in ds
+
+
+def test_bs_quantiles():
+    ds = xr.Dataset(dict(
+        some=xr.DataArray(np.arange(3).reshape(1, 3), dims=('a', 'b')),
+        some_bs=xr.DataArray(np.arange(100).reshape(1, -1), dims=('a', 'bs')),
+    ))
+    qs = (.025, .5, .975)
+    bs_quantiles(ds, qs=qs)
+    assert 'some' in ds
+    assert 'some_stats' not in ds
+    assert 'some_bs' in ds
+    assert 'bs' in ds.dims  # dimension name of 'some_bs'
+    assert 'some_bs_stats' in ds
+    assert ds['some_bs_stats'].dims == ('a', 'stat')
+    assert len(ds['stat']) == len(qs) + 1
+    
+    
+def test_remove_bs_datavars():
+    ds = xr.Dataset(dict(
+        some=xr.DataArray(np.arange(6).reshape(2, 3), dims=('a', 'b')),
+        other=xr.DataArray(np.arange(6).reshape(2, 3), dims=('a', 'b')),
+        some_bs=xr.DataArray(np.arange(6).reshape(2, 3), dims=('a', 'bs')),
+        other_bs=xr.DataArray(np.arange(6).reshape(2, 3), dims=('a', 'bs')),
+    ))
+    remove_bs_datavars(ds)
+    assert 'some' in ds
+    assert 'other' in ds
+    assert 'some_bs' not in ds
+    assert 'other_bs' not in ds
+    assert 'bs' not in ds

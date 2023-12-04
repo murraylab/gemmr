@@ -42,7 +42,7 @@ def test_prepare_confounders():
 def test_preproc_sm():
     sm, ftr_names = _mk_sm()
     confounders = prepare_confounders(sm)
-    uu2, uu2_white, S4, feature_names = preproc_sm(sm, confounders,
+    uu2, uu2_white, S4_raw, S4_deconfounded, feature_names = preproc_sm(sm, confounders,
                feature_names=ftr_names, final_deconfound=False)
     assert set(feature_names) == set(ftr_names)
     assert np.allclose(uu2_white.var(0), 1)
@@ -52,7 +52,7 @@ def test_preproc_fc():
     sm = _mk_sm()[0]
     confounders = prepare_confounders(sm)
     X = _mk_fc()
-    uu1, uu1_white, vv1 = preproc_fc(X, confounders)
+    uu1, uu1_white, vv1, N4 = preproc_fc(X, confounders)
     assert np.allclose(uu1_white.var(0), 1)
 
 

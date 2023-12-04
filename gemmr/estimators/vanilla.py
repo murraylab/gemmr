@@ -11,53 +11,18 @@ from scipy.spatial.distance import cdist
 from sklearn.base import BaseEstimator
 from sklearn.utils import check_array, check_consistent_length
 from sklearn.utils.validation import check_is_fitted, FLOAT_DTYPES
-from sklearn.utils.extmath import svd_flip
+# from sklearn.utils.extmath import svd_flip
 import sklearn.cross_decomposition
 
 from .helpers import _center_scale_xy, _calc_cov, \
     CanonicalCorrelationScorerMixin, SingularMatrixError
 
 __all__ = [
-    'SVDPLS', 'SVDCCA', 'NIPALSPLS', 'NIPALSCCA'
+    'SVDPLS', 'SVDCCA', 'NIPALSPLS', 'NIPALSCCA', 'BiViewTransformer'
 ]
 
 
-class SVDPLS(BaseEstimator):
-    """Partial Least Squares estimators based on singular value decomposition.
-
-    Parameters
-    ----------
-    n_components : int >= 1
-        number of between-set components to estimate
-    covariance : str
-        must be 'empirical'
-    scale : bool
-        whether to divide each feature by its standard deviation before fitting
-    std_ddof : int >= 0
-        when calculating standard deviations and covariances, they are
-        normalized by ``1 / (n - std_ddof)``
-
-
-    Attributes
-    ----------
-    covs_: np.ndarray (n_components,)
-        contains the covariances between scores. This is the quantity that is
-        maximized by PLS
-    assocs_: np.ndarray (n_components,)
-        Identical to covs_. `assocs_`` is the common identifier used in in
-        ``SVDPLS``, ``SVDCCA``, ``NIPALSPLS`` and ``NIPALSCCA`` for the
-        association strength that is optimized by each particular method
-    corrs_ : np.ndarray (n_components_,)
-        Pearson correlations between `X` and `Y` scores for each component
-    """
-
-    def __init__(self, n_components=1, covariance='empirical', scale=False,
-                 std_ddof=0, calc_loadings=False):
-        self.n_components = n_components
-        self.covariance = covariance
-        self.scale = scale
-        self.std_ddof = std_ddof
-        self.calc_loadings = calc_loadings
+class BiViewTransformer:
 
     def _preprocess_data_for_fit(self, X, Y, copy):
         """Check if data conforms to expectations and possibly center-scale it.
@@ -96,9 +61,9 @@ class SVDPLS(BaseEstimator):
 
         Parameters
         ----------
-        X : np.ndarray (n_samples, n_X_features)
+        X : np.ndarray (n_samples, n_X_features) or None
             data matrix X
-        Y : np.ndarray (n_samples, n_Y_features)
+        Y : np.ndarray (n_samples, n_Y_features) or None
             data matrix Y
         copy : bool
             whether a copy of the data is returned
@@ -111,18 +76,104 @@ class SVDPLS(BaseEstimator):
             data matrix Y
         """
 
-        X = check_array(X, copy=copy, dtype=FLOAT_DTYPES)
-        # Normalize
-        X -= self.x_mean_
-        X /= self.x_std_
+        if X is not None:
+            X = check_array(X, copy=copy, dtype=FLOAT_DTYPES)
+            # Normalize
+            X -= self.x_mean_
+            X /= self.x_std_
 
-        Y = check_array(Y, ensure_2d=False, copy=copy, dtype=FLOAT_DTYPES)
-        if Y.ndim == 1:
-            Y = Y.reshape(-1, 1)
-        Y -= self.y_mean_
-        Y /= self.y_std_
+        if Y is not None:
+            Y = check_array(Y, ensure_2d=False, copy=copy, dtype=FLOAT_DTYPES)
+            if Y.ndim == 1:
+                Y = Y.reshape(-1, 1)
+            Y -= self.y_mean_
+            Y /= self.y_std_
 
         return X, Y
+
+    def transform(self, X, Y=None, copy=True):
+        """Apply the previously fitted estimator to new data.
+
+        Parameters
+        ----------
+        X : np.ndarray (n_samples, n_X_features)
+            data matrix X
+        Y : np.ndarray (n_samples, n_Y_features)
+            data matrix Y
+        copy : boolean, default True
+            Whether to copy X and Y, or perform in-place normalization.
+
+        Returns
+        -------
+        x_scores if Y is not given, (x_scores, y_scores) otherwise. If X is
+        None returns (None, y_scores).
+        """
+
+        check_is_fitted(self)
+        X, Y = self._preprocess_data_for_transform(X, Y, copy)
+
+        if X is not None:
+            Xt = X @ self.x_rotations_
+        else:
+            Xt = None
+
+        if Y is not None:
+            Yt = Y @ self.y_rotations_
+
+            return Xt, Yt
+
+        return Xt
+
+
+def _select_weight_signs(wX, wY, x_align_ref):
+    if x_align_ref is None:
+        return wX, wY  # do nothing
+    else:
+        # implicitly assume that wX and wY have same number of columns
+        n_modes = min(wX.shape[1], x_align_ref.shape[1])
+        for m in range(n_modes):
+            sgn = np.sign(wX[:, m] @ x_align_ref[:, m])
+            wX[:, m] *= sgn
+            wY[:, m] *= sgn
+        return wX, wY
+
+
+class SVDPLS(BaseEstimator, BiViewTransformer):
+    """Partial Least Squares estimators based on singular value decomposition.
+
+    Parameters
+    ----------
+    n_components : int >= 1
+        number of between-set components to estimate
+    covariance : str
+        must be 'empirical'
+    scale : bool
+        whether to divide each feature by its standard deviation before fitting
+    std_ddof : int >= 0
+        when calculating standard deviations and covariances, they are
+        normalized by ``1 / (n - std_ddof)``
+
+
+    Attributes
+    ----------
+    covs_: np.ndarray (n_components,)
+        contains the covariances between scores. This is the quantity that is
+        maximized by PLS
+    assocs_: np.ndarray (n_components,)
+        Identical to covs_. ``assocs_`` is the common identifier used in in
+        ``SVDPLS``, ``SVDCCA``, ``NIPALSPLS`` and ``NIPALSCCA`` for the
+        association strength that is optimized by each particular method
+    corrs_ : np.ndarray (n_components_,)
+        Pearson correlations between `X` and `Y` scores for each component
+    """
+
+    def __init__(self, n_components=1, covariance='empirical', scale=False,
+                 std_ddof=0, calc_loadings=False):
+        self.n_components = n_components
+        self.covariance = covariance
+        self.scale = scale
+        self.std_ddof = std_ddof
+        self.calc_loadings = calc_loadings
 
     def _postprocess(self, X, Y, U, V, s):
         self.covs_ = s[:self.n_components]
@@ -139,7 +190,7 @@ class SVDPLS(BaseEstimator):
     def _calc_K(self, between_cov, X, Y):
         return between_cov
 
-    def fit(self, X, Y, copy=True):
+    def fit(self, X, Y, copy=True, x_align_ref=None):
         """Fit the estimator.
 
         Parameters
@@ -150,6 +201,10 @@ class SVDPLS(BaseEstimator):
             data matrix Y
         copy : bool
             Whether to copy X and Y, or perform in-place normalization.
+        x_align_ref : np.ndarray (n_X_features, n_modes) or None
+            if not None, sign ambiguity of weights is resolved by picking their
+            sign such that they have positive overlap with columns in
+            ``x_align_ref``. Ignored if None.
 
         Returns
         -------
@@ -175,8 +230,8 @@ class SVDPLS(BaseEstimator):
             assert np.isfinite(K).all()
             raise SingularMatrixError('SVD not converged')
 
-        U, Vh = svd_flip(U, Vh)
         V = Vh.T
+        U, V = _select_weight_signs(U, V, x_align_ref)
 
         U, V, s = self._postprocess(X, Y, U, V, s)
 
@@ -185,10 +240,12 @@ class SVDPLS(BaseEstimator):
         self.x_scores_ = np.dot(X, self.x_rotations_)
         self.y_scores_ = np.dot(Y, self.y_rotations_)
         if self.calc_loadings:
-            self.x_loadings_ = 1 - cdist(X.T, self.x_scores_.T,
-                                         metric='correlation')
-            self.y_loadings_ = 1 - cdist(Y.T, self.y_scores_.T,
-                                         metric='correlation')
+            self.x_loadings_ = self.get_x_loadings(X)
+            self.y_loadings_ = self.get_y_loadings(Y)
+            self.yx_redundancies_ = (self.corrs_**2) * \
+                                    (self.y_loadings_**2).mean(0)
+            self.xy_redundancies_ = (self.corrs_ ** 2) * \
+                                    (self.x_loadings_ ** 2).mean(0)
         self.assocs_ = s
 
         if y_is_1d:  # for compatibility with sklearn.cross_decomposition
@@ -219,30 +276,11 @@ class SVDPLS(BaseEstimator):
         self.fit(X, Y, **fit_params)
         return self.x_scores_, self.y_scores_
 
-    def transform(self, X, Y, copy=True):
-        """Apply the previously fitted estimator to new data.
+    def get_x_loadings(self, X):
+        return 1 - cdist(X.T, self.x_scores_.T, metric='correlation')
 
-        Parameters
-        ----------
-        X : np.ndarray (n_samples, n_X_features)
-            data matrix X
-        Y : np.ndarray (n_samples, n_Y_features)
-            data matrix Y
-        copy : boolean, default True
-            Whether to copy X and Y, or perform in-place normalization.
-
-        Returns
-        -------
-        x_scores if Y is not given, (x_scores, y_scores) otherwise.
-        """
-
-        check_is_fitted(self)
-        X, Y = self._preprocess_data_for_transform(X, Y, copy)
-
-        Xt = np.dot(X, self.x_rotations_)
-        Yt = np.dot(Y, self.y_rotations_)
-
-        return Xt, Yt
+    def get_y_loadings(self, Y):
+        return 1 - cdist(Y.T, self.y_scores_.T, metric='correlation')
 
 
 class SVDCCA(SVDPLS, CanonicalCorrelationScorerMixin):
@@ -278,7 +316,7 @@ class SVDCCA(SVDPLS, CanonicalCorrelationScorerMixin):
         contains the canonical correlations. This is the quantity that's
         maximized by CCA
     assocs_: np.ndarray (n_components,)
-        Identical to corrs_. `assocs_`` is the common identifier used in in
+        Identical to corrs_. ``assocs_`` is the common identifier used in in
         ``SVDPLS``, ``SVDCCA``, ``NIPALSPLS`` and ``NIPALSCCA`` for the
         association strength that is optimized by each particular method
 
@@ -290,9 +328,11 @@ class SVDCCA(SVDPLS, CanonicalCorrelationScorerMixin):
     """
 
     def __init__(self, n_components=1, covariance='empirical', scale=False,
-                 std_ddof=1, cov_out_of_bounds='nan', normalize_weights=True):
+                 std_ddof=1, cov_out_of_bounds='nan', normalize_weights=True,
+                 calc_loadings=False):
         super().__init__(n_components=n_components, covariance=covariance,
-                         scale=scale, std_ddof=std_ddof)
+                         scale=scale, std_ddof=std_ddof,
+                         calc_loadings=calc_loadings)
         self.cov_out_of_bounds = cov_out_of_bounds
         self.normalize_weights = normalize_weights
 
@@ -394,7 +434,7 @@ class NIPALSPLS(sklearn.cross_decomposition.PLSCanonical):
         contains the covariances between scores. This is the quantity that is
          maximized by PLS
     assocs_: np.ndarray (n_components,)
-        Identical to corrs_. `assocs_`` is the common identifier used in in
+        Identical to corrs_. ``assocs_`` is the common identifier used in in
         ``SVDPLS``, ``SVDCCA``, ``NIPALSPLS`` and ``NIPALSCCA`` for the
         association strength that is optimized by each particular method
 
@@ -407,6 +447,7 @@ class NIPALSPLS(sklearn.cross_decomposition.PLSCanonical):
 
         super().fit(X, Y)
 
+        self.x_scores_, self.y_scores_ = super().transform(X, Y)
         if np.isfinite(self.x_scores_).all() and \
                 np.isfinite(self.y_scores_).all():
             self.corrs_ = np.array(
@@ -426,7 +467,7 @@ class NIPALSPLS(sklearn.cross_decomposition.PLSCanonical):
         # return consistently shaped Y rotations, scores
         if y_is_1d:
             # NOTE: sklearn has deprecated "x_scores_" and "y_scores_", remove eventually!
-            self._y_scores = self.y_scores_[:, 0]
+            self.y_scores_ = self.y_scores_[:, 0]
             self.y_rotations_ = self.y_rotations_[:, 0]
 
         return self
@@ -442,7 +483,7 @@ class NIPALSCCA(sklearn.cross_decomposition.CCA):
         contains the canonical correlations. This is the quantity that's
         maximized by CCA
     assocs_: np.ndarray (n_components,)
-        Identical to corrs_. `assocs_`` is the common identifier used in in
+        Identical to corrs_. ``assocs_`` is the common identifier used in in
         ``SVDPLS``, ``SVDCCA``, ``NIPALSPLS`` and ``NIPALSCCA`` for the
         association strength that is optimized by each particular method
    """
@@ -454,6 +495,7 @@ class NIPALSCCA(sklearn.cross_decomposition.CCA):
 
         super().fit(X, Y)
 
+        self.x_scores_, self.y_scores_ = super().transform(X, Y)
         if np.isfinite(self.x_scores_).all() and \
                 np.isfinite(self.y_scores_).all():
             self.corrs_ = np.array(
@@ -468,7 +510,7 @@ class NIPALSCCA(sklearn.cross_decomposition.CCA):
         # return consistently shaped Y rotations, scores
         if y_is_1d:
             # NOTE: sklearn has deprecated "x_scores_" and "y_scores_", remove eventually!
-            self._y_scores = self.y_scores_[:, 0]
+            self.y_scores_ = self.y_scores_[:, 0]
             self.y_rotations_ = self.y_rotations_[:, 0]
 
         return self

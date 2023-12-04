@@ -95,7 +95,7 @@ def test__calc_n_required():
     n_req = _calc_n_required(np.empty(5) * np.nan, np.empty(5) * np.nan, y_target_min, y_target_max, verbose=True)
     assert np.isnan(n_req)
 
-    n_req = _calc_n_required(x[4:7], y[4:7], y_target_min, y_target_max, verbose=True)
+    n_req = _calc_n_required(x[3:6], y[3:6], y_target_min, y_target_max, verbose=True)
     assert np.isnan(n_req)
 
     n_req = _calc_n_required(x, y+100, y_target_min, y_target_max, verbose=True)
@@ -148,8 +148,8 @@ def test_calc_n_required_all_metrics():
     ds['between_assocs_true'] = tmp
     ds['x_weights_true_cossim'] = tmp
     ds['y_weights_true_cossim'] = tmp
-    ds['x_test_scores_true_spearman'] = tmp
-    ds['y_test_scores_true_spearman'] = tmp
+    ds['x_test_scores_true_pearson'] = tmp
+    ds['y_test_scores_true_pearson'] = tmp
     ds['x_test_loadings_true_pearson'] = tmp
     ds['y_test_loadings_true_pearson'] = tmp
     assert_raises(ValueError, calc_n_required_all_metrics, ds, search_dim='not_a_dim')

@@ -18,3 +18,8 @@ coverage.xml
 *~
 .idea/*
 **/.DS_Store
+
+doc/_build/
+doc/_autosummary/
+doc/savefig/
+doc/tmp/

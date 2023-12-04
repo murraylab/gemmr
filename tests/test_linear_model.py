@@ -24,20 +24,10 @@ def test__do_fit_lm():
         between_corrs_true=tmp.r
     ))
     lm, X, y, coeff_names = do_fit_lm(
-        ds, n_reqs, include_pc_var_decay_constants=True, include_latent_explained_vars=True, verbose=True
+        ds, n_reqs, include_pc_var_decay_constants=True, include_latent_explained_vars=False, verbose=True
     )
     assert isinstance(lm, LinearRegression)
     assert coeff_names[0] == 'const'
-    assert len(coeff_names) == 5
-
-    lm, X, y, coeff_names = do_fit_lm(
-        ds, n_reqs, include_pc_var_decay_constants=True, include_latent_explained_vars=False
-    )
-    assert len(coeff_names) == 4
-
-    lm, X, y, coeff_names = do_fit_lm(
-        ds, n_reqs, include_pc_var_decay_constants=False, include_latent_explained_vars=True
-    )
     assert len(coeff_names) == 4
 
     lm, X, y, coeff_names = do_fit_lm(

@@ -10,7 +10,7 @@ To use the generative model, import and instantiate a :class:`GEMMR` object
 .. ipython:: python
 
     from gemmr.generative_model import GEMMR
-    gm = GEMMR('cca', px=10, py=5, r_between=0.3)
+    gm = GEMMR('cca', wx=10, wy=5, r_between=0.3)
 
 Here, we have set the number of X and Y features to 10 and y, respectively, and the between-set correlation to 0.3.
 With this, synthetic data can be generated:

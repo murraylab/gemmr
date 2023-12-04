@@ -10,7 +10,7 @@ import xarray as xr
 from sklearn.utils import check_random_state, deprecated
 from sklearn.model_selection import KFold
 
-from .analyzers import analyze_resampled, analyze_subsampled
+from .analyzers import analyze_resampled, analyze_splithalf
 from ..sample_analysis import addon, postproc
 
 
@@ -41,11 +41,11 @@ def calc_p_value(estr, X, Y, permutations=999, fit_params=None,
         dataset Y
     permutations : int > 1 or np.ndarray (n_permutations, n_samples)
         if ``int`` indicates the number of permutations to perform, and all
-        possible permutations are allowed,
+        possible permutations are allowed, if == 0 then np.nan is returned;
         if ``np.ndarray`` each row gives one set of permutation indices (i.e.
         the set of values in each row must be a permutation of [0, n_samples)
         and the order of columns are assumed to correspond to the order
-        of rows of X and Y)
+        of rows of X and Y), if length of array is 0 then np.nan is returned
     fit_params : dict
         keyword-arguments for estr.fit
     random_state : None, int or rng-instance
@@ -67,9 +67,13 @@ def calc_p_value(estr, X, Y, permutations=999, fit_params=None,
 
     if isinstance(permutations, numbers.Integral):
         n_permutations = permutations
+        if n_permutations == 0:
+            return np.nan
         perm_iter = naive_permutations(Y, rng, n_permutations)
     else:
         n_permutations = len(permutations)
+        if n_permutations == 0:
+            return np.nan
         perm_iter = permutations
 
     perm_scores = np.nan * np.empty(n_permutations)
@@ -82,17 +86,17 @@ def calc_p_value(estr, X, Y, permutations=999, fit_params=None,
 
 
 def analyze_subsampled_and_resampled(
-        estr, X, Y, permutations=1000, n_min_subsample=None,
-        frac_max_subsample=0.8, n_subsample_ns=5, n_rep_subsample=100,
-        n_perm_subsample=1000, n_test_subsample=0, n_jobs=1, fit_params=None,
-        random_state=0):
+        estr, X, Y, Xorig=None, Yorig=None, permutations=1000, ns=None,
+        n_min_subsample=None, frac_max_subsample=0.5, n_subsample_ns=5,
+        n_rep_subsample=100, n_perm_subsample=1000, n_test_subsample=0,
+        cv=True, n_jobs=1, fit_params=None, random_state=0):
     """Analyzes the given data with the given estimator.
 
     Specifially:
 
     * calculates the permutation-based p-value
-    * analyzes the whole-sample, and its permutations
-    * analyzes subsamples of the data
+    * analyzes the full sample, and its permutations
+    * analyzes non-overlapping subsamples of the data
 
     Parameters
     ----------
@@ -103,19 +107,28 @@ def analyze_subsampled_and_resampled(
         dataset X
     Y : np.ndarray (n_samples, n_Y_features)
         dataset Y
+    Xorig : np.ndarray (n_samples, n_X_features)
+        X dataset of original variables (for calculating loadings)
+    Yorig : np.ndarray (n_samples, n_Y_features)
+        Y dataset of original variables (for calculating loadings)
     permutations : int or iterable
         used for calculating p-value and the whole-sample analysis. If int,
         gives the number of permutations used, if iterable each element
         gives one set of permutation indices
+    ns : list of int
+        number of samples to which the data are subsampled. If ``None``
+        calculated from ``n_min_subsample``, ``frac_max_subsample`` and
+        ``n_subsample_ns``
     n_min_subsample : None or int
         minimum number of samples to which the data are subsampled. If None
-        ``X.shape[1]+Y.shape[1]+2`` is used
+        ``X.shape[1]+Y.shape[1]+2`` is used. Ignored if ``ns`` is not ``None``
     frac_max_subsample : float between 0 and 1
         the maximum number of samples to which the data are subsampled is
-        ``frac_max_subsample * len(X)``
+        ``frac_max_subsample * len(X)``. Ignored if ``ns`` is not ``None``
     n_subsample_ns : int
         the list of sample sizes to which the data are subsampled is a
-        ``np.logspace`` with this many entries
+        ``np.logspace`` with this many entries. Ignored if ``ns`` is not
+        ``None``
     n_rep_subsample : int
         number of times a subsampled dataset of a given size is generated
     n_perm_subsample : int
@@ -124,6 +137,8 @@ def analyze_subsampled_and_resampled(
         number of subjects to use as test set in subsampled datasets. If
         ``n_test == 'auto'`` then ``n_test = n_samples - max(ns)`` will be
         used.
+    cv : bool
+        if ``True`` run cross-validations
     n_jobs : int or None
         number of parallel jobs (see :class:`joblib.Parallel`)
     fit_params : dict
@@ -136,82 +151,108 @@ def analyze_subsampled_and_resampled(
     results : dict
         with items:
 
-        * p_value : float (permutation-based p-value)
-        * whole_sample : xr.Dataset (output of analyze_resampled)
+        * full_sample : xr.Dataset (output of analyze_resampled)
+            This also contains ``p-value`` as a data-variable
         * subsampled : xr.Dataset (output of analyze_subsampled)
     """
+
+    if n_test_subsample > 0:
+        raise ValueError('n_test_subsample is deprecated')
 
     assert len(X) == len(Y)
     assert 0 <= frac_max_subsample <= 1
     if n_rep_subsample <= 1:
-        raise ValueError(f"n_rep_subsample must be >= 2, got {n_rep_subsample}")
+        raise ValueError(f"n_rep_subsample must be >= 2, "
+                         f"got {n_rep_subsample}")
+    if frac_max_subsample > .5:
+        raise ValueError("To obtain only non-overlapping subsamples, "
+                         "frac_max_subsample must be <= 0.5")
+
+    rng = check_random_state(random_state)
+
+    addons = [
+        addon.weights_pc_cossim,
+        addon.loadings_pc_cossim,
+        addon.loadings_pc_pearsonsim,
+        addon.redundancies,
+    ]
+    postprocs = [
+        #postproc.weights_pairwise_cossim_stats,
+        postproc.weights_splithalf_cossim,
+        postproc.loadings_splithalf_pearsonsim,
+        # postproc.scores_pairwise_spearmansim_stats,
+        # postproc.remove_test_scores,
+    ]
+    if (Xorig is not None) and (Yorig is not None):
+        addons += [
+            addon.orig_loadings_pc_cossim,
+            addon.orig_loadings_pc_pearsonsim,
+        ]
+        postprocs += [
+            postproc.orig_loadings_splithalf_pearsonsim,
+        ]
+    if cv:
+        addons += [
+            addon.cv,
+            addon.remove_cv_weights_loadings,
+        ]
+
     # p-value
     p_value = calc_p_value(estr, X, Y, permutations=permutations,
-                           fit_params=fit_params, random_state=random_state)
+                           fit_params=fit_params, random_state=rng)
 
     # whole sample analysis with permutations
     ds_tmp = analyze_resampled(estr, X, Y, random_state=0, perm=0,
                                fit_params=fit_params)
-    ds_whole_sample = analyze_resampled(
+    ds_full_sample = analyze_resampled(
         estr,
         X, Y,
+        Xorig=Xorig, Yorig=Yorig,
         x_align_ref=ds_tmp.x_weights.values,
         y_align_ref=ds_tmp.y_weights.values,
         perm=permutations,
-        addons=[
-            addon.weights_pc_cossim,
-            addon.cv,
-            addon.remove_cv_weights,
-        ],
+        addons=addons,
         cvs=[
             ('kfold5', KFold(5)),
         ],
         scorers=addon.mk_scorers_for_cv(),
         n_jobs=n_jobs,
-        random_state=random_state,
+        random_state=rng,
         fit_params=fit_params,
     )
-    ds_whole_sample.attrs['n_samples'] = len(X)
+    ds_full_sample.attrs['n_samples'] = len(X)
+    ds_full_sample['p_value'] = p_value
 
     # analysis of subsampled data
-    if n_min_subsample is None:
-        n_min_subsample = (X.shape[1] + Y.shape[1]) + 2
-    ns = np.logspace(np.log10(n_min_subsample),
-                     np.log10(frac_max_subsample*len(X)),
-                     n_subsample_ns, dtype=int)
+    if ns is None:
+        if n_min_subsample is None:
+            n_min_subsample = (X.shape[1] + Y.shape[1]) + 2
+        ns = np.logspace(np.log10(n_min_subsample),
+                         np.log10(frac_max_subsample*len(X)),
+                         n_subsample_ns, dtype=int)
+    # else: use ``ns`` as is
 
-    ds_subsampled = analyze_subsampled(
+    ds_subsampled = analyze_splithalf(
         estr,
         X, Y,
+        Xorig=Xorig, Yorig=Yorig,
         ns=ns,
         n_rep=n_rep_subsample,
         n_perm=n_perm_subsample,
-        n_test=n_test_subsample,
-        addons=[
-            addon.weights_pc_cossim,
-            addon.cv,
-            addon.remove_cv_weights,
-            addon.test_scores,
-        ],
+        n_test=0,
+        addons=addons,
         cvs=[
             ('kfold5', KFold(5)),
         ],
         scorers=addon.mk_scorers_for_cv(),
-        postprocessors=[
-            postproc.weights_pairwise_cossim_stats,
-            postproc.scores_pairwise_spearmansim_stats,
-            postproc.remove_test_scores,
-        ],
+        postprocessors=postprocs,
         n_jobs=n_jobs,
-        random_state=random_state,
+        random_state=rng,
         fit_params=fit_params,
     )
-    del ds_subsampled['x_test_scores_perm']
-    del ds_subsampled['y_test_scores_perm']
 
     return dict(
-        p_value=p_value,
-        whole_sample=ds_whole_sample,
+        full_sample=ds_full_sample,
         subsampled=ds_subsampled,
     )
 

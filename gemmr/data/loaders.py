@@ -11,7 +11,7 @@ import atexit
 from ..generative_model import GEMMR
 
 import os
-_default_data_home = os.path.expanduser('~/gemmr_data')
+_default_data_home = os.path.expanduser('~/gemmr_data/gemmr_latest')
 
 
 _remote_urls = {
@@ -22,6 +22,8 @@ _remote_urls = {
     'sweep_pls_pls_random_sum+-2+0_wOtherModel.nc': 'https://osf.io/jdrn7/download',
     'sweep_pls_pls_random_sum+-3+-2_wOtherModel.nc': 'https://osf.io/wa8f6/download',
     'sweep_pls_pls_random_sum+-2+-2.nc': 'https://osf.io/r27kc/download',
+    'sweep_cca_cca_random_sum+-3+0_wOtherModel.nc': 'https://osf.io/m2eg3/download',
+    'sweep_pls_pls_random_sum+-3+0_wOtherModel.nc': 'https://osf.io/ntuch/download',
 }
 
 
@@ -155,6 +157,7 @@ def load_outcomes(dsid, model=None, data_home=None, fetch=True,
                              "need to set it explicitly")
 
     synthanad_home = _check_data_home(data_home)
+    print(f"Loading data from subfolder '{synthanad_home.rsplit('/', 1)[1]}'")
     fname = f'{dsid}.nc'
     path = os.path.join(synthanad_home, fname)
     _check_outcome_data_exists(fname, path, fetch=fetch)
@@ -168,8 +171,6 @@ def load_outcomes(dsid, model=None, data_home=None, fetch=True,
             other_model = 'cca'
         else:
             raise ValueError(f"model must be 'cca' or 'pls', not {model}")
-
-        del ds[f'{other_model}_weight_selection_algorithm']
 
         for v in ds.data_vars:
             if v in ['py']:
@@ -285,7 +286,7 @@ def load_metaanalysis(data_home=None, fetch=True):
         metaanalysis table
     """
     synthanad_home = _check_data_home(data_home)
-    fname = 'metaanalysis/metaanalysis.xlsx'
+    fname = 'litana/metaanalysis.xlsx'
     path = os.path.join(synthanad_home, fname)
     _check_outcome_data_exists(fname, path, fetch=fetch)
     return pd.read_excel(path, header=3)
@@ -369,10 +370,9 @@ def generate_example_dataset(model, px=5, py=5, ax=0, ay=0, r_between=0.3,
 
     gm = GEMMR(
         model, random_state=random_state,
-        px=px, py=py, qx=0.9, qy=0.9,
-        m=1, c1x=1, c1y=1, ax=ax, ay=ay, r_between=r_between, a_between=-1,
-        max_n_sigma_trials=10000, expl_var_ratio_thr=1. / 2,
-        cx=None, cy=None, verbose=False
+        wx=px, wy=py,
+        ax=ax, ay=ay, r_between=r_between,
+        max_n_sigma_trials=10000, expl_var_ratio_thr=1. / 2
     )
     X, Y = gm.generate_data(n)
 

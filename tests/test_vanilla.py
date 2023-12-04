@@ -29,8 +29,8 @@ def _test_estrs_equal(model, estr1, estr2, n=1000):
 
         print('pxy', px, py)
 
-        gm = GEMMR(model, random_state=rng, px=px, py=py, ax=ax, ay=ay,
-                   r_between=r_latent, verbose=False)
+        gm = GEMMR(model, random_state=rng, wx=px, wy=py, ax=ax, ay=ay,
+                   r_between=r_latent)
         X, Y = gm.generate_data(n, random_state=rng)
         Xtest, Ytest = gm.generate_data(n, random_state=rng)
 
@@ -39,12 +39,13 @@ def _test_estrs_equal(model, estr1, estr2, n=1000):
             Ytest = Ytest[:, 0]
 
         estr1.fit(X, Y)
-        estr2.fit(X, Y)
-
         if (Y.ndim == 1):
             assert estr1.y_rotations_.ndim == 1
-            assert estr2.y_rotations_.ndim == 1
             assert estr1.y_scores_.ndim == 1
+            
+        estr2.fit(X, Y)
+        if (Y.ndim == 1):
+            assert estr2.y_rotations_.ndim == 1
             assert estr2.y_scores_.ndim == 1
 
         # check corrs
@@ -227,8 +228,8 @@ def test_xy_reversed():
             ('pls', SVDPLS(n_components=1, scale=False, std_ddof=1)),
         ]:
 
-            gm = GEMMR(model, random_state=rng, px=px, py=py, ax=ax,
-                       ay=ay, r_between=r_latent, verbose=False)
+            gm = GEMMR(model, random_state=rng, wx=px, wy=py, ax=ax,
+                       ay=ay, r_between=r_latent)
             X, Y = gm.generate_data(n, random_state=rng)
 
             estr1 = clone(estr).fit(X, Y)

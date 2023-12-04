@@ -25,7 +25,6 @@ Estimators
    estimators.SVDCCA
    estimators.NIPALSPLS
    estimators.NIPALSCCA
-   estimators.SparseCCA
 
 Synthetic data generation
 -------------------------
@@ -34,7 +33,6 @@ Synthetic data generation
    :toctree: _autosummary
 
    generative_model.GEMMR
-   generative_model.setup_model
    generative_model.generate_data
 
 Analysis of CCA/PLS results
@@ -60,9 +58,10 @@ and arbitrary custom ones can be used as long as they have the same function sig
    :toctree: _autosummary
 
    sample_analysis.addon.remove_weights_loadings
-   sample_analysis.addon.remove_cv_weights
+   sample_analysis.addon.remove_cv_weights_loadings
    sample_analysis.addon.weights_true_cossim
-   sample_analysis.addon.scores_true_spearman
+   sample_analysis.addon.test_scores_true_spearman
+   sample_analysis.addon.test_scores_true_pearson
    sample_analysis.addon.loadings_true_pearson
    sample_analysis.addon.test_scores
    sample_analysis.addon.remove_test_scores

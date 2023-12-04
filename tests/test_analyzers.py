@@ -12,7 +12,7 @@ from gemmr.estimators import *
 
 import gemmr.generative_model
 import gemmr.sample_analysis.analyzers
-from gemmr.sample_analysis.analyzers import _calc_loadings, _calc_true_loadings, _get_py, _select_n_per_ftrs, \
+from gemmr.sample_analysis.analyzers import _calc_loadings, _get_py, _select_n_per_ftrs, \
     _prep_progressbar, _check_model_and_estr, _check_powerlaw_decay
 
 
@@ -35,25 +35,35 @@ def test_analyze_dataset():
 
     assert np.isclose(np.cov(estr.x_scores_[:, 0], estr.y_scores_[:, 0])[0, 1], result.between_covs_sample)
 
-    tgt_weights = xr.DataArray([[1./np.sqrt(2)]*2], dims=('mode', 'x_feature'), coords=dict(x_feature=np.arange(2)), name='x_weights').T
-    tgt_loadings = xr.DataArray(np.ones((1, 2), dtype=float), dims=('mode', 'x_orig_feature'), coords=dict(x_orig_feature=np.arange(2)), name='x_loadings').T
-    assert_xr_allclose(result.x_weights, tgt_weights)
-    assert_xr_allclose(result.x_loadings, tgt_loadings)
+    sgn = np.sign(result.x_weights.values[0, 0])
+    x_tgt_weights = xr.DataArray([[sgn * 1./np.sqrt(2)]*2], dims=('mode', 'x_feature'), coords=dict(x_feature=np.arange(2)), name='x_weights').T
+    x_tgt_loadings = xr.DataArray(sgn * np.ones((1, 2), dtype=float), dims=('mode', 'x_feature'), coords=dict(x_feature=np.arange(2)), name='x_loadings').T
+    assert_xr_allclose(result.x_weights, x_tgt_weights)
+    assert_xr_allclose(result.x_loadings, x_tgt_loadings)
 
-    tgt_weights = tgt_weights.rename('y_weights').rename(x_feature='y_feature')
-    tgt_loadings = tgt_loadings.rename('y_loadings').rename(x_orig_feature='y_orig_feature')
+    y_tgt_weights = x_tgt_weights.rename('y_weights').rename(x_feature='y_feature')
+    y_tgt_loadings = x_tgt_loadings.rename('y_loadings').rename(x_feature='y_feature')
 
-    assert_xr_allclose(result.y_weights, tgt_weights)
-    assert_xr_allclose(result.y_loadings, tgt_loadings)
+    assert_xr_allclose(result.y_weights, y_tgt_weights)
+    assert_xr_allclose(result.y_loadings, y_tgt_loadings)
 
     ###
 
-    assert np.all(result.x_weights.values > 0)
-    assert np.all(result.y_weights.values > 0)
+    # assert np.all(result.x_weights.values > 0)
+    # assert np.all(result.y_weights.values > 0)
     # i.e. if we now use rerun analyze_dataset with ``?_align_ref`` the weights should be negative
-
-    result = gemmr.sample_analysis.analyze_dataset(estr, X, Y, x_align_ref=-np.eye(2), y_align_ref=-np.eye(2))
-
+    
+    # rerun with x/y_align_ref = sgn*result.x/y_weights and expect weights to have opposite signs    
+    result = gemmr.sample_analysis.analyze_dataset(
+        estr, X, Y, 
+        x_align_ref=sgn * result.x_weights.values, 
+        y_align_ref=sgn * result.y_weights.values,
+    )
+    print(result.x_weights)
+    assert_xr_allclose(result.x_weights, sgn * x_tgt_weights)
+    assert_xr_allclose(result.x_loadings, sgn * x_tgt_loadings)
+    assert_xr_allclose(result.y_weights, sgn * y_tgt_weights)
+    assert_xr_allclose(result.y_loadings, sgn * y_tgt_loadings)
     ###
 
     class MockEstr():
@@ -70,8 +80,8 @@ def test_analyze_dataset():
         addon_var=3./8,
         x_weights=da_nan,
         y_weights=da_nan.rename(x_feature='y_feature'),
-        x_loadings=da_nan.rename(x_feature='x_orig_feature'),
-        y_loadings=da_nan.rename(x_feature='y_orig_feature')
+        x_loadings=da_nan.rename(x_feature='x_feature'),
+        y_loadings=da_nan.rename(x_feature='y_feature')
     ))
     assert_xr_equal(result, target_result)
 
@@ -235,7 +245,7 @@ def test_analyze_model_parameters(
 
     assert mock_analyze_resampled.call_count > 0
 
-    assert set(result.data_vars.keys()) == set(['var1', 'between_assocs_true', 'between_corrs_true', 'x_weights_true', 'y_weights_true', 'ax', 'ay', 'latent_expl_var_ratios_x', 'latent_expl_var_ratios_y', 'weight_selection_algorithm', 'x_loadings_true', 'x_crossloadings_true', 'y_loadings_true', 'y_crossloadings_true', 'py', 'test_stat1', 'postproc'])
+    assert set(result.data_vars.keys()) == set(['var1', 'between_assocs_true', 'between_corrs_true', 'x_weights_true', 'y_weights_true', 'ax', 'ay', 'x_loadings_true', 'x_crossloadings_true', 'y_loadings_true', 'y_crossloadings_true', 'py', 'test_stat1', 'postproc'])
     assert set(result.dims) == set(['Sigma_id', 'dummy', 'mode', 'n_per_ftr', 'px', 'r', 'rep', 'x_feature', 'y_feature'])
 
     assert np.allclose(result.postproc, 3.1)
@@ -264,9 +274,6 @@ def test_analyze_model_parameters(
     assert_allclose(result.ax.values, ax)
     assert_allclose(result.ay.values, ay)
 
-    assert result.latent_expl_var_ratios_x.dims == ('px', 'r', 'Sigma_id', 'mode')
-    assert result.latent_expl_var_ratios_y.dims == ('px', 'r', 'Sigma_id', 'mode')
-
     assert result.x_loadings_true.dims == ('px', 'r', 'Sigma_id', 'x_feature', 'mode')
     assert result.x_crossloadings_true.dims == ('px', 'r', 'Sigma_id', 'x_feature', 'mode')
     assert result.y_loadings_true.dims == ('px', 'r', 'Sigma_id', 'y_feature', 'mode')
@@ -274,10 +281,6 @@ def test_analyze_model_parameters(
 
     assert result.test_stat1.dims == ('px', 'r', 'Sigma_id')
     assert np.allclose(result.test_stat1.values, 2.5)
-
-    kwargs['rotate_XY'] = True
-    assert_warns(UserWarning, gemmr.sample_analysis.analyzers.analyze_model_parameters, **kwargs)
-    del kwargs['rotate_XY']
 
     kwargs['n_test'] = 1
     assert_warns(UserWarning, gemmr.sample_analysis.analyzers.analyze_model_parameters, **kwargs)
@@ -356,12 +359,6 @@ def test__calc_loadings():
     X[0, -1] = np.nan
     loadings = _calc_loadings(X, scores)
     assert loadings.shape == (3, 2)
-    assert_allclose(loadings[:-1], 1.)
-    assert np.isnan(loadings[-1]).all()
-
-    X = np.ma.masked_invalid(X)
-    loadings = _calc_loadings(X, scores)
-    assert loadings.shape == (3, 2)
     assert_allclose(loadings, 1.)
 
 
@@ -409,8 +406,8 @@ def test__check_model_and_estr():
     assert isinstance(_check_model_and_estr('pls', 'cCa'), SVDCCA)
     assert isinstance(_check_model_and_estr('cca', 'PlS'), SVDPLS)
     assert_raises(ValueError, _check_model_and_estr, None, 'NOTAESTR')
-    if 'SparseCCA' in locals():
-        assert isinstance(_check_model_and_estr('cca', 'SPARSECCA'), SparseCCA)
+    if 'SparsePLS' in locals():
+        assert isinstance(_check_model_and_estr('cca', 'SPARSEPLS'), SparsePLS)
 
     assert_raises(ValueError, _check_model_and_estr, 'cca', 'NOTAESTR')
     assert_raises(ValueError, _check_model_and_estr, 'cca', dict())
@@ -454,28 +451,3 @@ def test__select_n_per_ftrs():
     n_per_ftrs = np.array(n_per_ftrs)
     assert len(n_per_ftrs) > 0
     assert np.all(n_per_ftrs > 0)
-
-
-def test__calc_true_loadings():
-    px, py = 3, 5
-    for model, estr in [
-        ('cca', SVDCCA()),
-        ('pls', SVDPLS())
-    ]:
-        gm = gemmr.generative_model.GEMMR(model, px=px, py=py)
-
-        X, Y = gm.generate_data(100000, random_state=0)
-        estr.fit(X, Y)
-        lXX = 1 - cdist(X.T, estr.x_scores_.T, metric='correlation')
-        lXY = 1 - cdist(X.T, estr.y_scores_.T, metric='correlation')
-        lYX = 1 - cdist(Y.T, estr.x_scores_.T, metric='correlation')
-        lYY = 1 - cdist(Y.T, estr.y_scores_.T, metric='correlation')
-
-        true_loadings = _calc_true_loadings(gm.Sigma_, px,
-                                            gm.U_latent_, gm.V_latent_)
-
-        decimal = 2
-        assert_array_almost_equal_up_to_sign(lXX, true_loadings['x_loadings_true'], decimal=decimal)
-        assert_array_almost_equal_up_to_sign(lXY, true_loadings['x_crossloadings_true'], decimal=decimal)
-        assert_array_almost_equal_up_to_sign(lYX, true_loadings['y_crossloadings_true'], decimal=decimal)
-        assert_array_almost_equal_up_to_sign(lYY, true_loadings['y_loadings_true'], decimal=decimal)
